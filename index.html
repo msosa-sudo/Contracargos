@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procesador de contracargos dLocal → Dash</title>
+<style>
+  :root{
+    --bg:#0f1220; --card:#171a2b; --card2:#1e2237; --ink:#e8eaf2; --muted:#9aa0b8;
+    --line:#2a2f47; --accent:#6c8cff; --ok:#3ecf8e; --warn:#f5a623; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:1200px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px;margin:0 0 24px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .drop{background:var(--card);border:1.5px dashed var(--line);border-radius:12px;padding:16px;transition:.15s}
+  .drop.ok{border-color:var(--ok);border-style:solid}
+  .drop h3{margin:0 0 4px;font-size:14px}
+  .drop p{margin:0 0 10px;color:var(--muted);font-size:12px}
+  .drop input[type=file]{font-size:12px;color:var(--muted);width:100%}
+  .status{font-size:12px;margin-top:8px;color:var(--muted)}
+  .status.ok{color:var(--ok)}
+  .status.err{color:var(--err)}
+  button{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.ghost{background:var(--card2);color:var(--ink);border:1px solid var(--line)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:22px}
+  .summary{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 18px}
+  .pill{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 14px;font-size:13px}
+  .pill b{font-size:15px}
+  .pill.ok b{color:var(--ok)} .pill.warn b{color:var(--warn)} .pill.err b{color:var(--err)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--card);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--card2);color:var(--muted);font-weight:600;position:sticky;top:0}
+  tr.flag td{background:rgba(245,166,35,.07)}
+  tr.bad td{background:rgba(255,107,107,.08)}
+  .tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:6px;margin:1px 2px 1px 0}
+  .tag.ok{background:rgba(62,207,142,.15);color:var(--ok)}
+  .tag.warn{background:rgba(245,166,35,.15);color:var(--warn)}
+  .tag.err{background:rgba(255,107,107,.15);color:var(--err)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+  .section-title{font-size:15px;margin:26px 0 8px;display:flex;align-items:center;gap:8px}
+  .hint{color:var(--muted);font-size:12px;margin:0 0 10px}
+  .tablewrap{max-height:520px;overflow:auto;border-radius:10px;border:1px solid var(--line)}
+  a.dl{display:inline-block}
+  .cfgin{padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card2);color:var(--ink)}
+  .foot{color:var(--muted);font-size:12px;margin-top:30px;border-top:1px solid var(--line);padding-top:14px}
+  code{background:var(--card2);padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Procesador de contracargos dLocal → Dash</h1>
+  <p class="sub">Cargá los 3 archivos. Sincroniza el Sheet (agrega nuevos y actualiza estados que cambiaron) y genera los 2 CSV para subir a Dash. No modifica cuentas: se revisa y se sube a Dash manualmente.</p>
+
+  <div class="grid">
+    <div class="drop" id="drop-cbk">
+      <h3>1 · Contracargos dLocal</h3>
+      <p>El export de contracargos (columnas Reference, Invoice, Payment reference…).</p>
+      <input type="file" id="file-cbk" accept=".csv">
+      <div class="status" id="st-cbk">Sin archivo</div>
+    </div>
+    <div class="drop" id="drop-acc">
+      <h3>2 · Export de cuentas</h3>
+      <p>El export de cuentas de Dash (con la columna Pago hasta).</p>
+      <input type="file" id="file-acc" accept=".csv">
+      <div class="status" id="st-acc">Sin archivo</div>
+    </div>
+    <div class="drop" id="drop-pay">
+      <h3>3 · Historial de pagos</h3>
+      <p>El export del historial de pagos (con ID pago externo = T-…).</p>
+      <input type="file" id="file-pay" accept=".csv">
+      <div class="status" id="st-pay">Sin archivo</div>
+    </div>
+  </div>
+
+  <div class="drop" style="margin-bottom:16px">
+    <h3>⚙️ Antes de empezar</h3>
+    <p>La conexión con el Google Sheet ya está configurada. Escribí tu nombre (opcional) y, si es tu primera vez, apretá "Probar conexión" para autorizar tu cuenta @fu.do.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" id="cfg-eje" class="cfgin" placeholder="Tu nombre / ejecutiva (opcional)" style="flex:1;min-width:200px">
+      <button class="ghost" id="cfg-save">Guardar</button>
+      <button class="ghost" id="cfg-test">Probar conexión</button>
+    </div>
+    <div class="status" id="cfg-status"></div>
+  </div>
+
+  <div class="row">
+    <button id="btn-run" disabled>Procesar</button>
+    <button class="ghost" id="btn-reset">Limpiar</button>
+  </div>
+
+  <div id="out" style="display:none">
+    <div class="summary" id="summary"></div>
+
+    <div class="section-title">📋 Contracargos procesados</div>
+    <p class="hint">Al sincronizar: los nuevos validados se agregan (justo debajo del último contracargo), los que ya existen y cambiaron de estado se actualizan, el resto queda igual. Las filas en amarillo/rojo no se agregan como nuevas (pero sí se les actualiza el estado si ya existían).</p>
+    <div class="row">
+      <button id="btn-send" disabled>🔄 Sincronizar con el Sheet</button>
+      <button class="ghost" id="btn-copy">Copiar tabla (TSV)</button>
+      <a class="dl" id="dl-sheet"></a>
+    </div>
+    <div class="status" id="send-status" style="margin:-14px 0 18px"></div>
+    <div class="tablewrap"><table id="tbl-sheet"></table></div>
+
+    <div class="section-title">⬇️ CSV para subir a Dash</div>
+    <p class="hint">Solo incluyen las filas <b>validadas</b> (sin errores).</p>
+    <div class="row">
+      <a class="dl" id="dl-fecha"></a>
+      <a class="dl" id="dl-estado"></a>
+    </div>
+
+    <div class="section-title" id="rev-title" style="display:none">⚠️ Casos que requieren revisión manual</div>
+    <div class="tablewrap" id="rev-wrap" style="display:none"><table id="tbl-rev"></table></div>
+  </div>
+
+  <div class="foot">
+    <b>Sincronización:</b> la comparación se hace dentro del Apps Script de la planilla. La página manda todos los contracargos con su estado; el script busca cada referencia y, si el estado cambió, actualiza solo esa celda; si es nueva y válida, la inserta debajo del último contracargo; si está igual, no toca nada. Devuelve un resumen: agregados / actualizados / sin cambios / omitidos. Escribir requiere estar logueado con tu cuenta @fu.do.
+  </div>
+</div>
+<iframe name="sheet-sink" id="sheet-sink" style="display:none"></iframe>
+
+<script>
+/* ====== Conexión precargada (no tocar) ====== */
+const WEBAPP_URL='https://script.google.com/a/macros/fu.do/s/AKfycbyDnCYOWcVgi0m84QUBA59wrnyd1n5YipN6BNa1b5lYhwEiMf0_XXJGRY6dFfhK1do-dQ/exec';
+
+/* ---------- CSV parser ---------- */
+function parseCSV(text){
+  text = text.replace(/^﻿/,'');
+  const rows=[]; let row=[], field='', i=0, inQ=false;
+  while(i<text.length){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){ if(text[i+1]==='"'){field+='"';i+=2;continue;} inQ=false;i++;continue; }
+      field+=c;i++;continue;
+    }
+    if(c==='"'){inQ=true;i++;continue;}
+    if(c===','){row.push(field);field='';i++;continue;}
+    if(c==='\r'){i++;continue;}
+    if(c==='\n'){row.push(field);rows.push(row);row=[];field='';i++;continue;}
+    field+=c;i++;
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row);}
+  return rows.filter(r=>r.length>1 || (r.length===1 && r[0].trim()!==''));
+}
+function findHeader(rows, required){
+  for(let r=0;r<rows.length;r++){
+    const cells=rows[r].map(x=>x.trim().toLowerCase());
+    if(required.every(req=>cells.some(c=>c===req.toLowerCase()))){return r;}
+  }
+  return -1;
+}
+function toObjects(rows, headerIdx){
+  const header=rows[headerIdx].map(x=>x.trim());
+  const out=[];
+  for(let r=headerIdx+1;r<rows.length;r++){
+    const rr=rows[r];
+    if(rr.every(c=>c.trim()==='')) continue;
+    const o={};
+    header.forEach((h,i)=>o[h]=(rr[i]!==undefined?rr[i].trim():''));
+    out.push(o);
+  }
+  return {header,out};
+}
+function getCI(obj,names){
+  const keys=Object.keys(obj);
+  for(const n of names){
+    const k=keys.find(k=>k.toLowerCase()===n.toLowerCase());
+    if(k!==undefined) return obj[k];
+  }
+  return undefined;
+}
+function pagoHastaMenosMes(dateStr){
+  const m=/(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if(!m) return null;
+  let y=+m[1], mo=+m[2], d=+m[3];
+  const lastThis=new Date(Date.UTC(y,mo,0)).getUTCDate();
+  const endOfMonth = d===lastThis;
+  let py=y, pm=mo-1; if(pm<1){pm=12;py--;}
+  const lastPrev=new Date(Date.UTC(py,pm,0)).getUTCDate();
+  const day= endOfMonth ? lastPrev : Math.min(d,lastPrev);
+  return `${py}-${String(pm).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+}
+function monthKey(dateStr){const m=/(\d{4})-(\d{2})/.exec(dateStr||'');return m?m[1]+'-'+m[2]:null;}
+
+/* ---------- Carga de archivos ---------- */
+const data={cbk:null,acc:null,pay:null};
+function readFile(input,key,statusEl,dropEl){
+  const f=input.files[0]; if(!f){return;}
+  const fr=new FileReader();
+  fr.onload=e=>{
+    data[key]=parseCSV(e.target.result);
+    statusEl.textContent='✓ '+f.name+' ('+(data[key].length-1)+' filas aprox.)';
+    statusEl.classList.add('ok'); dropEl.classList.add('ok');
+    checkReady();
+  };
+  fr.readAsText(f);
+}
+function checkReady(){document.getElementById('btn-run').disabled=!(data.cbk&&data.acc&&data.pay);}
+document.getElementById('file-cbk').addEventListener('change',e=>readFile(e.target,'cbk',st('cbk'),dp('cbk')));
+document.getElementById('file-acc').addEventListener('change',e=>readFile(e.target,'acc',st('acc'),dp('acc')));
+document.getElementById('file-pay').addEventListener('change',e=>readFile(e.target,'pay',st('pay'),dp('pay')));
+function st(k){return document.getElementById('st-'+k);}
+function dp(k){return document.getElementById('drop-'+k);}
+document.getElementById('btn-reset').addEventListener('click',()=>location.reload());
+
+/* ---------- Procesamiento ---------- */
+let RESULTS=[];
+document.getElementById('btn-run').addEventListener('click',run);
+function run(){
+  const cbkH=findHeader(data.cbk,['Reference','Invoice']);
+  if(cbkH<0){alert('El archivo de contracargos no tiene las columnas Reference / Invoice.');return;}
+  const cbk=toObjects(data.cbk,cbkH).out;
+  const accH=findHeader(data.acc,['ID','Pago hasta']);
+  if(accH<0){alert('El export de cuentas no tiene las columnas ID / Pago hasta.');return;}
+  const accById={};
+  toObjects(data.acc,accH).out.forEach(r=>{const id=getCI(r,['ID']); if(id) accById[String(id).trim()]=r;});
+  const payH=findHeader(data.pay,['ID pago','ID pago externo']);
+  if(payH<0){alert('El historial de pagos no tiene las columnas ID pago / ID pago externo.');return;}
+  const payByExt={}, payById={};
+  toObjects(data.pay,payH).out.forEach(r=>{
+    const ext=getCI(r,['ID pago externo']); if(ext) payByExt[String(ext).trim()]=r;
+    const idp=getCI(r,['ID pago']); if(idp) payById[String(idp).trim()]=r;
+  });
+  RESULTS=cbk.map(c=>process(c,accById,payByExt,payById)).filter(x=>x);
+  render();
+  document.getElementById('out').style.display='block';
+}
+function process(c,accById,payByExt,payById){
+  const ref=getCI(c,['Reference'])||'';
+  if(!ref && !getCI(c,['Invoice'])) return null;
+  const invoice=(getCI(c,['Invoice'])||'').trim();
+  const seg=invoice.split('::');
+  const accId=(seg[0]||'').trim();
+  const invPayId=(seg[1]||'').trim();
+  const tref=(getCI(c,['Payment reference','Payment ID'])||'').trim();
+  const cbkStatus=getCI(c,['Status'])||'';
+  const userName=getCI(c,['User name','Cardholder name'])||'';
+  const flags=[];
+  const acc=accById[accId];
+  let nombre='', pagoHastaAct='', pagoHastaNew='';
+  if(!acc){ flags.push({l:'err',m:'Cuenta '+accId+' no está en el export de cuentas'}); }
+  else{
+    nombre=getCI(acc,['Nombre'])||'';
+    pagoHastaAct=(getCI(acc,['Pago hasta'])||'').slice(0,10);
+    pagoHastaNew=pagoHastaMenosMes(pagoHastaAct);
+    if(!pagoHastaNew) flags.push({l:'err',m:'No se pudo leer el Pago hasta ("'+pagoHastaAct+'")'});
+  }
+  let pay=payByExt[tref];
+  if(!pay && invPayId && payById[invPayId]){ pay=payById[invPayId]; flags.push({l:'warn',m:'No se encontró por T-ref; se usó el ID pago del Invoice'}); }
+  let idPago='', periodoIni='', periodoFin='', estadoPago='';
+  if(!pay){ flags.push({l:'err',m:'No se encontró el pago (ni por T-ref ni por Invoice)'}); }
+  else{
+    idPago=getCI(pay,['ID pago'])||'';
+    periodoIni=(getCI(pay,['Inicio de período de pago','Inicio de periodo de pago'])||'').slice(0,10);
+    periodoFin=(getCI(pay,['Fin de período de pago','Fin de periodo de pago'])||'').slice(0,10);
+    estadoPago=getCI(pay,['Estado'])||'';
+    if(invPayId && String(idPago).trim()!==invPayId){
+      flags.push({l:'err',m:'El ID pago del historial ('+idPago+') no coincide con el del Invoice ('+invPayId+')'});
+    }
+    const payAcc=(getCI(pay,['ID cuenta'])||'').trim();
+    if(payAcc && payAcc!==accId){ flags.push({l:'err',m:'El pago pertenece a la cuenta '+payAcc+', no a '+accId}); }
+    if(estadoPago && estadoPago.toLowerCase()!=='aprobado'){ flags.push({l:'warn',m:'El pago no está "Aprobado" (está "'+estadoPago+'")'}); }
+    if(periodoFin && pagoHastaAct && monthKey(periodoFin)!==monthKey(pagoHastaAct)){
+      flags.push({l:'warn',m:'El mes del pago ('+monthKey(periodoFin)+') no coincide con el mes de Pago hasta ('+monthKey(pagoHastaAct)+').'});
+    }
+  }
+  const hasErr=flags.some(f=>f.l==='err');
+  return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
+    pagoHastaAct,pagoHastaNew,tref,idPago,periodoIni,periodoFin,estadoPago,cbkStatus,userName,
+    flags,hasErr,ok:flags.length===0};
+}
+
+/* ---------- Render ---------- */
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+function flagTags(flags){
+  if(!flags.length) return '<span class="tag ok">OK</span>';
+  return flags.map(f=>`<span class="tag ${f.l==='err'?'err':'warn'}">${esc(f.m)}</span>`).join('');
+}
+function render(){
+  const ok=RESULTS.filter(r=>r.ok).length;
+  const warn=RESULTS.filter(r=>!r.ok&&!r.hasErr).length;
+  const err=RESULTS.filter(r=>r.hasErr).length;
+  document.getElementById('summary').innerHTML=
+    `<span class="pill">Contracargos: <b>${RESULTS.length}</b></span>`+
+    `<span class="pill ok">Listos: <b>${ok}</b></span>`+
+    `<span class="pill warn">Con aviso: <b>${warn}</b></span>`+
+    `<span class="pill err">Con error: <b>${err}</b></span>`;
+  const cols=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Controles'];
+  let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+  RESULTS.forEach(r=>{
+    const cls=r.hasErr?'bad':(r.ok?'':'flag');
+    h+=`<tr class="${cls}">`+
+      `<td class="mono">${esc(r.ref)}</td>`+
+      `<td>${esc(r.nombre)}</td>`+
+      `<td class="mono"><a href="${esc(r.link)}" target="_blank" style="color:var(--accent)">${esc(r.accId)}</a></td>`+
+      `<td class="mono">${esc(r.pagoHastaNew||'')}<br><span style="color:var(--muted)">antes: ${esc(r.pagoHastaAct||'—')}</span></td>`+
+      `<td class="mono">${esc(r.tref)}</td>`+
+      `<td class="mono">${esc(r.idPago)}</td>`+
+      `<td class="mono">${esc(r.periodoIni)}</td>`+
+      `<td class="mono">${esc(r.periodoFin)}</td>`+
+      `<td>${esc(r.cbkStatus)}</td>`+
+      `<td>${esc(r.userName)}</td>`+
+      `<td>${flagTags(r.flags)}</td>`+
+    `</tr>`;
+  });
+  h+='</tbody>';
+  document.getElementById('tbl-sheet').innerHTML=h;
+  updateSendBtn();
+
+  const good=goodRows();
+  const csvFecha='ID,Pago hasta\n'+good.map(r=>`${r.accId},${r.pagoHastaNew}`).join('\n');
+  const csvEstado='ID de pago,Estado\n'+good.map(r=>`${r.idPago},Desconocimiento`).join('\n');
+  setDownload('dl-fecha','Plantilla - Importar fecha de pago hasta.csv',csvFecha,`⬇️ Importar fecha de pago hasta (${good.length})`);
+  setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${good.length})`);
+
+  const tsvHead=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Status','Cliente','Controles'];
+  window.__tsv=[tsvHead.join('\t')].concat(RESULTS.map(r=>[
+    r.ref,r.nombre,r.link,r.pagoHastaNew,r.tref,r.idPago,r.periodoIni,r.periodoFin,r.cbkStatus,r.userName,
+    r.flags.map(f=>f.m).join(' | ')||'OK'
+  ].join('\t'))).join('\n');
+  setDownload('dl-sheet','seguimiento-contracargos.csv',
+    [tsvHead.join(',')].concat(RESULTS.map(r=>[r.ref,r.nombre,r.link,r.pagoHastaNew,r.tref,r.idPago,r.periodoIni,r.periodoFin,r.cbkStatus,r.userName,'"'+(r.flags.map(f=>f.m).join(' | ')||'OK')+'"'].join(','))).join('\n'),
+    '⬇️ Descargar filas del Sheet (CSV)');
+
+  const rev=RESULTS.filter(r=>!r.ok);
+  if(rev.length){
+    document.getElementById('rev-title').style.display='';
+    document.getElementById('rev-wrap').style.display='';
+    let rh='<thead><tr><th>Referencia</th><th>Cuenta</th><th>Motivo</th></tr></thead><tbody>';
+    rev.forEach(r=>{rh+=`<tr class="${r.hasErr?'bad':'flag'}"><td class="mono">${esc(r.ref)}</td><td>${esc(r.nombre||r.accId)}</td><td>${flagTags(r.flags)}</td></tr>`;});
+    document.getElementById('tbl-rev').innerHTML=rh+'</tbody>';
+  }
+}
+function setDownload(id,filename,content,label){
+  const a=document.getElementById(id);
+  const blob=new Blob([content],{type:'text/csv;charset=utf-8'});
+  a.href=URL.createObjectURL(blob); a.download=filename;
+  a.innerHTML=`<button class="ghost">${label}</button>`;
+}
+
+/* ---------- Config (solo nombre) + sincronización ---------- */
+const CFG={url:WEBAPP_URL,token:'',eje:''};
+function loadCfg(){
+  try{const c=JSON.parse(localStorage.getItem('cbk_cfg')||'{}');if(c.eje)CFG.eje=c.eje;}catch(e){}
+  CFG.url=WEBAPP_URL;
+  document.getElementById('cfg-eje').value=CFG.eje||'';
+  updateSendBtn();
+}
+function saveCfg(){
+  CFG.eje=document.getElementById('cfg-eje').value.trim();
+  try{localStorage.setItem('cbk_cfg',JSON.stringify({eje:CFG.eje}));}catch(e){}
+  const b=document.getElementById('cfg-save');const t=b.textContent;b.textContent='✓ Guardado';setTimeout(()=>b.textContent=t,1200);
+  updateSendBtn();
+}
+document.getElementById('cfg-save').addEventListener('click',saveCfg);
+document.getElementById('cfg-test').addEventListener('click',()=>{
+  const cs=document.getElementById('cfg-status');
+  cs.className='status';cs.textContent='Abriendo la conexión en otra pestaña… deberías ver {"ok":true,...}. Si te pide login, entrá con tu cuenta @fu.do.';
+  window.open(CFG.url,'_blank');
+});
+function today(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function rowObject(r){
+  return {
+    'Fecha':today(),
+    'Referencia desconocimiento':r.ref,
+    'Nombre de la cuenta':r.nombre,
+    'Link Dash':r.link,
+    'Pago hasta':r.pagoHastaNew,
+    'Ejecutiva':CFG.eje||'',
+    'Status':r.cbkStatus,
+    'Transacción relacionada':r.tref,
+    'ID de pago':r.idPago,
+    'Fecha inicio':r.periodoIni,
+    'Fecha fin':r.periodoFin
+  };
+}
+function goodRows(){return RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago);}
+function updateSendBtn(){const b=document.getElementById('btn-send');if(b)b.disabled=!(CFG.url&&RESULTS.length);}
+function sendToSheet(){
+  if(!RESULTS.length){alert('Primero procesá un archivo.');return;}
+  const items=RESULTS.map(r=>({
+    ref:r.ref,
+    status:r.cbkStatus,
+    canInsert: !r.hasErr && !!r.pagoHastaNew && !!r.idPago,
+    row: rowObject(r)
+  }));
+  const btn=document.getElementById('btn-send'); btn.disabled=true;
+  const ss=document.getElementById('send-status');
+  ss.className='status'; ss.textContent='Sincronizando '+items.length+' contracargos…';
+  const form=document.createElement('form');
+  form.action=CFG.url; form.method='POST'; form.target='_blank';
+  const inp=document.createElement('input');
+  inp.type='hidden'; inp.name='data';
+  inp.value=JSON.stringify({action:'sync',token:CFG.token||'',items:items});
+  form.appendChild(inp); document.body.appendChild(form);
+  form.submit();
+  ss.className='status ok';
+  ss.textContent='✓ Enviado. Se abrió una pestaña con el resumen: {added, updated, unchanged, skipped}. Revisá la planilla. El CSV/TSV queda como respaldo.';
+  setTimeout(()=>{ if(form.parentNode) form.remove(); btn.disabled=false; },3000);
+}
+document.getElementById('btn-send').addEventListener('click',sendToSheet);
+document.getElementById('btn-copy').addEventListener('click',()=>{
+  navigator.clipboard.writeText(window.__tsv||'').then(()=>{
+    const b=document.getElementById('btn-copy');const t=b.textContent;b.textContent='✓ Copiado';setTimeout(()=>b.textContent=t,1500);
+  });
+});
+loadCfg();
+</script>
+</body>
+</html>
