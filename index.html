@@ -58,6 +58,15 @@
   .cfgin{padding:8px;border-radius:8px;border:1.5px solid var(--gris);background:var(--blanco);color:var(--texto);font-family:'Barlow',sans-serif}
   .foot{color:var(--texto);font-size:12px;margin-top:30px;border-top:1px solid var(--gris);padding-top:14px}
   code{background:var(--lavanda);color:var(--azul-oscuro);padding:1px 5px;border-radius:4px;font-size:12px}
+  details.manual{background:var(--blanco);border:1px solid var(--gris);border-radius:12px;padding:4px 16px;margin-bottom:20px}
+  details.manual summary{cursor:pointer;font-weight:700;color:var(--azul-oscuro);font-size:15px;padding:12px 0;list-style:none}
+  details.manual summary::-webkit-details-marker{display:none}
+  details.manual summary::before{content:'▸ ';color:var(--naranja)}
+  details.manual[open] summary::before{content:'▾ '}
+  .manual h4{margin:14px 0 4px;color:var(--naranja);font-size:14px;font-weight:700}
+  .manual p{margin:0 0 6px;font-size:13px}
+  .manual .fname{display:inline-block;background:var(--lavanda);color:var(--azul-oscuro);font-weight:600;padding:1px 6px;border-radius:5px;font-size:12px}
+  .filehint{font-size:11px;color:var(--azul-oscuro);margin:6px 0 2px;font-weight:600}
 </style>
 </head>
 <body>
@@ -67,22 +76,45 @@
 </div></header>
 <div class="wrap">
 
+  <details class="manual">
+    <summary>📖 Manual de uso — qué archivo va en cada sección</summary>
+    <p><b>Flujo:</b> cargá los 3 archivos → <b>Procesar</b> → revisá la tabla → <b>Sincronizar con el Sheet</b> → descargá los 2 CSV y subilos a Dash. Escribir en el Sheet requiere login @fu.do.</p>
+
+    <h4>1 · Contracargos dLocal</h4>
+    <p>Es el listado de contracargos exportado desde dLocal. Nombre del archivo: <span class="fname">dlocal-chargeback-….csv</span></p>
+    <p><b>Cómo obtenerlo:</b> en dLocal, entrá a la sección de <b>Contracargos / Chargebacks</b>, elegí el rango de fechas y descargá el reporte en CSV.</p>
+    <p>Debe incluir las columnas <code>Reference</code>, <code>Invoice</code> y <code>Payment reference</code>.</p>
+
+    <h4>2 · Export de cuentas</h4>
+    <p>Es el listado de cuentas de Dash con la fecha "Pago hasta". Nombre del archivo: <span class="fname">accounts_….csv</span></p>
+    <p><b>Cómo obtenerlo:</b> en Dash, exportá el <b>listado de cuentas</b> a CSV.</p>
+    <p>Debe incluir las columnas <code>ID</code>, <code>Nombre</code> y <code>Pago hasta</code>.</p>
+
+    <h4>3 · Historial de pagos</h4>
+    <p>Es el historial de pagos de Dash. Nombre del archivo: <span class="fname">reports-downloads_payment_history_….csv</span></p>
+    <p><b>Cómo obtenerlo:</b> en Dash, andá a <b>Reportes / Descargas → Historial de pagos</b> y descargá el CSV.</p>
+    <p>Debe incluir las columnas <code>ID pago</code>, <code>ID cuenta</code> e <code>ID pago externo</code> (empieza con <code>T-</code>).</p>
+  </details>
+
   <div class="grid">
     <div class="drop" id="drop-cbk">
       <h3>1 · Contracargos dLocal</h3>
-      <p>El export de contracargos (columnas Reference, Invoice, Payment reference…).</p>
+      <p>El export de contracargos de dLocal (columnas Reference, Invoice, Payment reference…).</p>
+      <div class="filehint">📄 dlocal-chargeback-….csv</div>
       <input type="file" id="file-cbk" accept=".csv">
       <div class="status" id="st-cbk">Sin archivo</div>
     </div>
     <div class="drop" id="drop-acc">
       <h3>2 · Export de cuentas</h3>
       <p>El export de cuentas de Dash (con la columna Pago hasta).</p>
+      <div class="filehint">📄 accounts_….csv</div>
       <input type="file" id="file-acc" accept=".csv">
       <div class="status" id="st-acc">Sin archivo</div>
     </div>
     <div class="drop" id="drop-pay">
       <h3>3 · Historial de pagos</h3>
-      <p>El export del historial de pagos (con ID pago externo = T-…).</p>
+      <p>El export del historial de pagos de Dash (con ID pago externo = T-…).</p>
+      <div class="filehint">📄 reports-downloads_payment_history_….csv</div>
       <input type="file" id="file-pay" accept=".csv">
       <div class="status" id="st-pay">Sin archivo</div>
     </div>
