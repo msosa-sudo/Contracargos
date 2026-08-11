@@ -98,24 +98,24 @@
 
   <div class="grid">
     <div class="drop" id="drop-cbk">
-      <h3>1 · Contracargos dLocal</h3>
-      <p>El export de contracargos de dLocal (columnas Reference, Invoice, Payment reference…).</p>
-      <div class="filehint">📄 dlocal-chargeback-….csv</div>
-      <input type="file" id="file-cbk" accept=".csv">
+      <h3>1 · Export de contracargos</h3>
+      <p>El export de contracargos de dLocal (.csv) o de Mercado Pago Argentina (.xlsx). Se detecta automáticamente.</p>
+      <div class="filehint">📄 dlocal-chargeback-….csv &nbsp;o&nbsp; after_collection-….xlsx</div>
+      <input type="file" id="file-cbk" accept=".csv,.xlsx,.xls">
       <div class="status" id="st-cbk">Sin archivo</div>
     </div>
     <div class="drop" id="drop-acc">
       <h3>2 · Export de cuentas</h3>
       <p>El export de cuentas de Dash (con la columna Pago hasta).</p>
       <div class="filehint">📄 accounts_….csv</div>
-      <input type="file" id="file-acc" accept=".csv">
+      <input type="file" id="file-acc" accept=".csv,.xlsx,.xls">
       <div class="status" id="st-acc">Sin archivo</div>
     </div>
     <div class="drop" id="drop-pay">
-      <h3>3 · Historial de pagos</h3>
-      <p>El export del historial de pagos de Dash (con ID pago externo = T-…).</p>
-      <div class="filehint">📄 reports-downloads_payment_history_….csv</div>
-      <input type="file" id="file-pay" accept=".csv">
+      <h3>3 · Reporte de Ventas (VO) <span style="font-weight:400;color:var(--gris)">(opcional)</span></h3>
+      <p>Opcional. El ID de pago ya sale del archivo de contracargos. El reporte de Ventas Online (Metabase) sirve para verificar el pago y traer el período. Subí uno filtrado (Argentina o últimos meses); el completo es muy pesado.</p>
+      <div class="filehint">📄 query_result_….csv</div>
+      <input type="file" id="file-pay" accept=".csv,.xlsx,.xls">
       <div class="status" id="st-pay">Sin archivo</div>
     </div>
   </div>
@@ -166,6 +166,7 @@
 </div>
 <iframe name="sheet-sink" id="sheet-sink" style="display:none"></iframe>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 /* ====== Conexión precargada (no tocar) ====== */
 const WEBAPP_URL='https://script.google.com/a/macros/fu.do/s/AKfycbyDnCYOWcVgi0m84QUBA59wrnyd1n5YipN6BNa1b5lYhwEiMf0_XXJGRY6dFfhK1do-dQ/exec';
@@ -231,18 +232,26 @@ function monthKey(dateStr){const m=/(\d{4})-(\d{2})/.exec(dateStr||'');return m?
 
 /* ---------- Carga de archivos ---------- */
 const data={cbk:null,acc:null,pay:null};
+function sheetToRows(buf){
+  const wb=XLSX.read(buf,{type:'array'});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const arr=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+  return arr.map(r=>r.map(c=>c==null?'':String(c))).filter(r=>r.some(c=>c!==''));
+}
 function readFile(input,key,statusEl,dropEl){
   const f=input.files[0]; if(!f){return;}
+  const isXlsx=/\.xlsx?$/i.test(f.name);
   const fr=new FileReader();
   fr.onload=e=>{
-    data[key]=parseCSV(e.target.result);
+    try{ data[key]= isXlsx ? sheetToRows(e.target.result) : parseCSV(e.target.result); }
+    catch(err){ statusEl.className='status err'; statusEl.textContent='No se pudo leer el archivo: '+err; return; }
     statusEl.textContent='✓ '+f.name+' ('+(data[key].length-1)+' filas aprox.)';
     statusEl.classList.add('ok'); dropEl.classList.add('ok');
     checkReady();
   };
-  fr.readAsText(f);
+  if(isXlsx) fr.readAsArrayBuffer(f); else fr.readAsText(f);
 }
-function checkReady(){document.getElementById('btn-run').disabled=!(data.cbk&&data.acc&&data.pay);}
+function checkReady(){document.getElementById('btn-run').disabled=!(data.cbk&&data.acc);}
 document.getElementById('file-cbk').addEventListener('change',e=>readFile(e.target,'cbk',st('cbk'),dp('cbk')));
 document.getElementById('file-acc').addEventListener('change',e=>readFile(e.target,'acc',st('acc'),dp('acc')));
 document.getElementById('file-pay').addEventListener('change',e=>readFile(e.target,'pay',st('pay'),dp('pay')));
@@ -253,26 +262,109 @@ document.getElementById('btn-reset').addEventListener('click',()=>location.reloa
 /* ---------- Procesamiento ---------- */
 let RESULTS=[];
 document.getElementById('btn-run').addEventListener('click',run);
+function detectCbkType(rows){
+  for(let r=0;r<Math.min(rows.length,6);r++){
+    const cells=rows[r].map(x=>String(x).toLowerCase());
+    if(cells.some(c=>c.includes('operation_external_reference'))) return {type:'mp',hdr:r};
+    if(cells.some(c=>c==='reference') && cells.some(c=>c==='invoice')) return {type:'dlocal',hdr:r};
+  }
+  return {type:null};
+}
+/* busca valor por sufijo del encabezado (para los headers de MP tipo "Estado (status)") */
+function getBy(obj,codes){
+  const keys=Object.keys(obj);
+  for(const code of codes){
+    const k=keys.find(k=>k.toLowerCase().endsWith(code));
+    if(k!==undefined) return obj[k];
+  }
+  return undefined;
+}
+/* normaliza números con separadores de miles: "1,026,177" -> "1026177" */
+function numKey(v){ return String(v==null?'':v).replace(/[,\s]/g,'').replace(/\.0$/,'').trim(); }
+/* normaliza fechas variadas a YYYY-MM-DD */
+function toISO(s){
+  s=String(s||'').trim(); if(!s) return '';
+  let m=/^(\d{4})-(\d{2})-(\d{2})/.exec(s); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+  m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(s); if(m) return m[3]+'-'+m[2]+'-'+m[1];
+  const M={january:'01',february:'02',march:'03',april:'04',may:'05',june:'06',july:'07',august:'08',september:'09',october:'10',november:'11',december:'12',enero:'01',febrero:'02',marzo:'03',abril:'04',mayo:'05',junio:'06',julio:'07',agosto:'08',septiembre:'09',octubre:'10',noviembre:'11',diciembre:'12'};
+  m=/^([A-Za-zñÑáéíóúÁÉÍÓÚ]+)\s+(\d{1,2}),?\s+(\d{4})/.exec(s);
+  if(m){const mm=M[m[1].toLowerCase()]; if(mm) return m[3]+'-'+mm+'-'+String(m[2]).padStart(2,'0');}
+  return s;
+}
+/* índice de pagos desde el reporte (acepta Historial de pagos o Ventas Online) */
+function payHeaderRow(rows){
+  for(let r=0;r<Math.min(rows.length,6);r++){
+    const cells=rows[r].map(x=>String(x).trim().toLowerCase());
+    if(cells.some(c=>c==='payment_receipt_number'||c==='id pago externo')) return r;
+  }
+  return -1;
+}
+function buildPayIndex(rows){
+  const idx={byRef:{},byId:{}};
+  if(!rows) return idx;
+  const hr=payHeaderRow(rows); if(hr<0) return idx;
+  toObjects(rows,hr).out.forEach(r=>{
+    const ref=(getCI(r,['ID pago externo','Payment_Receipt_Number'])||'').trim();
+    if(ref) idx.byRef[ref]=r;
+    const id=numKey(getCI(r,['ID pago','Payment_ID']));
+    if(id) idx.byId[id]=r;
+  });
+  return idx;
+}
 function run(){
-  const cbkH=findHeader(data.cbk,['Reference','Invoice']);
-  if(cbkH<0){alert('El archivo de contracargos no tiene las columnas Reference / Invoice.');return;}
-  const cbk=toObjects(data.cbk,cbkH).out;
+  const det=detectCbkType(data.cbk);
+  if(!det.type){alert('No reconozco el archivo de contracargos (no parece ni de dLocal ni de Mercado Pago).');return;}
   const accH=findHeader(data.acc,['ID','Pago hasta']);
   if(accH<0){alert('El export de cuentas no tiene las columnas ID / Pago hasta.');return;}
   const accById={};
   toObjects(data.acc,accH).out.forEach(r=>{const id=getCI(r,['ID']); if(id) accById[String(id).trim()]=r;});
-  const payH=findHeader(data.pay,['ID pago','ID pago externo']);
-  if(payH<0){alert('El historial de pagos no tiene las columnas ID pago / ID pago externo.');return;}
-  const payByExt={}, payById={};
-  toObjects(data.pay,payH).out.forEach(r=>{
-    const ext=getCI(r,['ID pago externo']); if(ext) payByExt[String(ext).trim()]=r;
-    const idp=getCI(r,['ID pago']); if(idp) payById[String(idp).trim()]=r;
-  });
-  RESULTS=cbk.map(c=>process(c,accById,payByExt,payById)).filter(x=>x);
+
+  const payIdx=buildPayIndex(data.pay);
+  const cbk=toObjects(data.cbk,det.hdr).out;
+  if(det.type==='dlocal') RESULTS=cbk.map(c=>process(c,accById,payIdx)).filter(x=>x);
+  else RESULTS=cbk.map(c=>processMP(c,accById,payIdx)).filter(x=>x);
   render();
   document.getElementById('out').style.display='block';
 }
-function process(c,accById,payByExt,payById){
+function processMP(c,accById,payIdx){
+  const flow=(getBy(c,['(flow)'])||'').trim().toLowerCase();
+  if(flow!=='chargeback') return null; // solo contracargos (ignora refunds/claims)
+  const ext=(getBy(c,['(operation_external_reference)'])||'').trim();
+  const seg=ext.split('::');
+  const accId=(seg[0]||'').trim();
+  const payId=(seg[1]||'').trim();
+  const status=getBy(c,['(status)'])||'';
+  const cliente=getBy(c,['(counterpart_name)'])||'';
+  const opId=(getBy(c,['(operation_id)'])||'').trim();
+  const ref = (accId&&payId) ? ('MP-'+accId+'-'+payId) : ('MP-'+(getBy(c,['(id)'])||'').trim());
+  const flags=[];
+  if(!accId||!payId) flags.push({l:'err',m:'No pude leer cuenta/pago del external_reference ("'+ext+'")'});
+  const acc=accById[accId];
+  let nombre='', pagoHastaAct='', pagoHastaNew='';
+  if(!acc){ flags.push({l:'err',m:'Cuenta '+accId+' no está en el export de cuentas'}); }
+  else{
+    nombre=getCI(acc,['Nombre'])||'';
+    pagoHastaAct=(getCI(acc,['Pago hasta'])||'').slice(0,10);
+    pagoHastaNew=pagoHastaMenosMes(pagoHastaAct);
+    if(!pagoHastaNew) flags.push({l:'err',m:'No se pudo leer el Pago hasta ("'+pagoHastaAct+'")'});
+  }
+  // enriquecer período desde el reporte de Ventas, si está y se encuentra el pago
+  let periodoIni='', periodoFin='';
+  if(payIdx){
+    const pay = payIdx.byRef[opId] || (payId ? payIdx.byId[numKey(payId)] : null);
+    if(pay){
+      periodoIni=toISO(getCI(pay,['Inicio de período de pago','Inicio de periodo de pago','Start_Date']));
+      periodoFin=toISO(getCI(pay,['Fin de período de pago','Fin de periodo de pago','End_Date']));
+      const payAcc=numKey(getCI(pay,['ID cuenta','Account_ID']));
+      if(payAcc && accId && payAcc!==numKey(accId)) flags.push({l:'warn',m:'El pago encontrado es de la cuenta '+payAcc+', no de '+accId});
+    }
+  }
+  const hasErr=flags.some(f=>f.l==='err');
+  return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
+    pagoHastaAct,pagoHastaNew,tref:opId,idPago:payId,periodoIni:periodoIni,periodoFin:periodoFin,estadoPago:'',
+    cbkStatus:status,userName:cliente,flags,hasErr,ok:flags.length===0};
+}
+function process(c,accById,payIdx){
   const ref=getCI(c,['Reference'])||'';
   if(!ref && !getCI(c,['Invoice'])) return null;
   const invoice=(getCI(c,['Invoice'])||'').trim();
@@ -292,24 +384,28 @@ function process(c,accById,payByExt,payById){
     pagoHastaNew=pagoHastaMenosMes(pagoHastaAct);
     if(!pagoHastaNew) flags.push({l:'err',m:'No se pudo leer el Pago hasta ("'+pagoHastaAct+'")'});
   }
-  let pay=payByExt[tref];
-  if(!pay && invPayId && payById[invPayId]){ pay=payById[invPayId]; flags.push({l:'warn',m:'No se encontró por T-ref; se usó el ID pago del Invoice'}); }
-  let idPago='', periodoIni='', periodoFin='', estadoPago='';
-  if(!pay){ flags.push({l:'err',m:'No se encontró el pago (ni por T-ref ni por Invoice)'}); }
-  else{
-    idPago=getCI(pay,['ID pago'])||'';
-    periodoIni=(getCI(pay,['Inicio de período de pago','Inicio de periodo de pago'])||'').slice(0,10);
-    periodoFin=(getCI(pay,['Fin de período de pago','Fin de periodo de pago'])||'').slice(0,10);
+  // ID de pago: sale del Invoice (segmento 2), igual que en MP. El reporte de Ventas es opcional (verifica/período).
+  let pay = payIdx.byRef[tref] || (invPayId ? payIdx.byId[numKey(invPayId)] : null);
+  let idPago = invPayId || '', periodoIni='', periodoFin='', estadoPago='';
+  if(pay){
+    const idH=numKey(getCI(pay,['ID pago','Payment_ID']));
+    if(idH) idPago=idH;
+    periodoIni=toISO(getCI(pay,['Inicio de período de pago','Inicio de periodo de pago','Start_Date']));
+    periodoFin=toISO(getCI(pay,['Fin de período de pago','Fin de periodo de pago','End_Date']));
     estadoPago=getCI(pay,['Estado'])||'';
-    if(invPayId && String(idPago).trim()!==invPayId){
-      flags.push({l:'err',m:'El ID pago del historial ('+idPago+') no coincide con el del Invoice ('+invPayId+')'});
+    if(invPayId && idH && idH!==numKey(invPayId)){
+      flags.push({l:'err',m:'El ID pago del reporte ('+idH+') no coincide con el del Invoice ('+invPayId+')'});
     }
-    const payAcc=(getCI(pay,['ID cuenta'])||'').trim();
-    if(payAcc && payAcc!==accId){ flags.push({l:'err',m:'El pago pertenece a la cuenta '+payAcc+', no a '+accId}); }
+    const payAcc=numKey(getCI(pay,['ID cuenta','Account_ID']));
+    if(payAcc && payAcc!==numKey(accId)){ flags.push({l:'err',m:'El pago pertenece a la cuenta '+payAcc+', no a '+accId}); }
     if(estadoPago && estadoPago.toLowerCase()!=='aprobado'){ flags.push({l:'warn',m:'El pago no está "Aprobado" (está "'+estadoPago+'")'}); }
     if(periodoFin && pagoHastaAct && monthKey(periodoFin)!==monthKey(pagoHastaAct)){
       flags.push({l:'warn',m:'El mes del pago ('+monthKey(periodoFin)+') no coincide con el mes de Pago hasta ('+monthKey(pagoHastaAct)+').'});
     }
+  } else if(!invPayId){
+    flags.push({l:'err',m:'No pude leer el ID de pago del Invoice'});
+  } else {
+    flags.push({l:'warn',m:'Pago no verificado en el reporte de Ventas (se usó el ID de pago del Invoice)'});
   }
   const hasErr=flags.some(f=>f.l==='err');
   return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
