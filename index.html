@@ -49,6 +49,8 @@
   .tag.ok{background:var(--lavanda);color:var(--azul-oscuro)}
   .tag.warn{background:var(--salmon);color:var(--texto)}
   .tag.err{background:var(--naranja);color:#fff}
+  .tag.info{background:var(--azul-medio);color:#fff}
+  .pill.vp b{color:var(--azul-medio)}
   .mono{font-family:'Barlow',sans-serif;font-size:11.5px;letter-spacing:.02em}
   .section-title{font-size:16px;font-weight:700;color:var(--azul-oscuro);margin:26px 0 8px;display:flex;align-items:center;gap:8px}
   .hint{color:var(--texto);font-size:12px;margin:0 0 10px}
@@ -99,9 +101,9 @@
   <div class="grid">
     <div class="drop" id="drop-cbk">
       <h3>1 · Export de contracargos</h3>
-      <p>El export de contracargos de dLocal (.csv) o de Mercado Pago Argentina (.xlsx). Se detecta automáticamente.</p>
-      <div class="filehint">📄 dlocal-chargeback-….csv &nbsp;o&nbsp; after_collection-….xlsx</div>
-      <input type="file" id="file-cbk" accept=".csv,.xlsx,.xls">
+      <p>Podés cargar <b>varios juntos</b>: dLocal (.csv) y Mercado Pago (.xlsx) a la vez. Cada uno se detecta automáticamente.</p>
+      <div class="filehint">📄 dlocal-chargeback-….csv &nbsp;+&nbsp; after_collection-….xlsx</div>
+      <input type="file" id="file-cbk" accept=".csv,.xlsx,.xls" multiple>
       <div class="status" id="st-cbk">Sin archivo</div>
     </div>
     <div class="drop" id="drop-acc">
@@ -231,12 +233,28 @@ function pagoHastaMenosMes(dateStr){
 function monthKey(dateStr){const m=/(\d{4})-(\d{2})/.exec(dateStr||'');return m?m[1]+'-'+m[2]:null;}
 
 /* ---------- Carga de archivos ---------- */
-const data={cbk:null,acc:null,pay:null};
+const data={cbkFiles:[],acc:null,pay:null};
 function sheetToRows(buf){
   const wb=XLSX.read(buf,{type:'array'});
   const ws=wb.Sheets[wb.SheetNames[0]];
   const arr=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
   return arr.map(r=>r.map(c=>c==null?'':String(c))).filter(r=>r.some(c=>c!==''));
+}
+async function handleCbk(input){
+  const files=[...input.files];
+  const statusEl=document.getElementById('st-cbk'), dropEl=document.getElementById('drop-cbk');
+  data.cbkFiles=[];
+  try{
+    for(const f of files){
+      const isXlsx=/\.xlsx?$/i.test(f.name);
+      const rows= isXlsx ? sheetToRows(await f.arrayBuffer()) : parseCSV(await f.text());
+      data.cbkFiles.push({name:f.name, rows});
+    }
+    statusEl.className='status ok';
+    statusEl.textContent='✓ '+files.length+' archivo(s): '+files.map(f=>f.name).join(', ');
+    dropEl.classList.add('ok');
+  }catch(err){ statusEl.className='status err'; statusEl.textContent='No se pudo leer un archivo: '+err; }
+  checkReady();
 }
 function readFile(input,key,statusEl,dropEl){
   const f=input.files[0]; if(!f){return;}
@@ -251,8 +269,8 @@ function readFile(input,key,statusEl,dropEl){
   };
   if(isXlsx) fr.readAsArrayBuffer(f); else fr.readAsText(f);
 }
-function checkReady(){document.getElementById('btn-run').disabled=!(data.cbk&&data.acc);}
-document.getElementById('file-cbk').addEventListener('change',e=>readFile(e.target,'cbk',st('cbk'),dp('cbk')));
+function checkReady(){document.getElementById('btn-run').disabled=!(data.cbkFiles.length&&data.acc);}
+document.getElementById('file-cbk').addEventListener('change',e=>handleCbk(e.target));
 document.getElementById('file-acc').addEventListener('change',e=>readFile(e.target,'acc',st('acc'),dp('acc')));
 document.getElementById('file-pay').addEventListener('change',e=>readFile(e.target,'pay',st('pay'),dp('pay')));
 function st(k){return document.getElementById('st-'+k);}
@@ -300,7 +318,7 @@ function payHeaderRow(rows){
   return -1;
 }
 function buildPayIndex(rows){
-  const idx={byRef:{},byId:{}};
+  const idx={byRef:{},byId:{},byAcc:{}};
   if(!rows) return idx;
   const hr=payHeaderRow(rows); if(hr<0) return idx;
   toObjects(rows,hr).out.forEach(r=>{
@@ -308,23 +326,57 @@ function buildPayIndex(rows){
     if(ref) idx.byRef[ref]=r;
     const id=numKey(getCI(r,['ID pago','Payment_ID']));
     if(id) idx.byId[id]=r;
+    const acc=numKey(getCI(r,['ID cuenta','Account_ID']));
+    if(acc){
+      const iso=toISO(getCI(r,['Payment_Date','Fecha de acreditación del pago','Fecha']));
+      (idx.byAcc[acc]=idx.byAcc[acc]||[]).push({iso:iso, pid:id, rec:ref});
+    }
   });
   return idx;
 }
+/* busca un pago del mismo titular con fecha POSTERIOR al pago desconocido (pagoHastaAct) */
+function detectarVolvioPagar(payIdx, accId, pagoHastaAct){
+  if(!payIdx || !payIdx.byAcc || !pagoHastaAct) return null;
+  const list=payIdx.byAcc[numKey(accId)]; if(!list) return null;
+  let best=null;
+  list.forEach(p=>{ if(p.iso && p.iso>pagoHastaAct && (!best || p.iso>best.iso)) best=p; });
+  return best; // {iso,pid,rec} o null
+}
 function run(){
-  const det=detectCbkType(data.cbk);
-  if(!det.type){alert('No reconozco el archivo de contracargos (no parece ni de dLocal ni de Mercado Pago).');return;}
   const accH=findHeader(data.acc,['ID','Pago hasta']);
   if(accH<0){alert('El export de cuentas no tiene las columnas ID / Pago hasta.');return;}
   const accById={};
   toObjects(data.acc,accH).out.forEach(r=>{const id=getCI(r,['ID']); if(id) accById[String(id).trim()]=r;});
-
   const payIdx=buildPayIndex(data.pay);
-  const cbk=toObjects(data.cbk,det.hdr).out;
-  if(det.type==='dlocal') RESULTS=cbk.map(c=>process(c,accById,payIdx)).filter(x=>x);
-  else RESULTS=cbk.map(c=>processMP(c,accById,payIdx)).filter(x=>x);
+
+  RESULTS=[];
+  const noRecon=[];
+  data.cbkFiles.forEach(function(file){
+    const det=detectCbkType(file.rows);
+    if(!det.type){ noRecon.push(file.name); return; }
+    const cbk=toObjects(file.rows,det.hdr).out;
+    const res = (det.type==='dlocal')
+      ? cbk.map(c=>process(c,accById,payIdx)).filter(x=>x)
+      : cbk.map(c=>processMP(c,accById,payIdx)).filter(x=>x);
+    RESULTS=RESULTS.concat(res);
+  });
+
+  if(noRecon.length) alert('No reconocí estos archivos (no parecen dLocal ni Mercado Pago) y los salteé:\n- '+noRecon.join('\n- '));
+  if(!RESULTS.length){ alert('No encontré contracargos válidos en los archivos cargados.'); return; }
   render();
   document.getElementById('out').style.display='block';
+}
+/* traduce el estado de Mercado Pago al vocabulario de dLocal que acepta el Sheet */
+function mapEstadoMP(s){
+  const k=String(s||'').trim().toLowerCase();
+  const M={
+    'dispute':'IN_DISPUTE',
+    'in_process':'IN_DISPUTE',
+    'documentation_pending':'DISPUTE_RECEIVED',
+    'reimbursed':'DISPUTE_LOST',
+    'closed':'COMPLETED'
+  };
+  return M[k] || 'DISPUTE_RECEIVED';
 }
 function processMP(c,accById,payIdx){
   const flow=(getBy(c,['(flow)'])||'').trim().toLowerCase();
@@ -333,7 +385,7 @@ function processMP(c,accById,payIdx){
   const seg=ext.split('::');
   const accId=(seg[0]||'').trim();
   const payId=(seg[1]||'').trim();
-  const status=getBy(c,['(status)'])||'';
+  const status=mapEstadoMP(getBy(c,['(status)']));
   const cliente=getBy(c,['(counterpart_name)'])||'';
   const opId=(getBy(c,['(operation_id)'])||'').trim();
   const ref = (accId&&payId) ? ('MP-'+accId+'-'+payId) : ('MP-'+(getBy(c,['(id)'])||'').trim());
@@ -359,10 +411,12 @@ function processMP(c,accById,payIdx){
       if(payAcc && accId && payAcc!==numKey(accId)) flags.push({l:'warn',m:'El pago encontrado es de la cuenta '+payAcc+', no de '+accId});
     }
   }
+  const vp=detectarVolvioPagar(payIdx,accId,pagoHastaAct);
+  if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
   const hasErr=flags.some(f=>f.l==='err');
   return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref:opId,idPago:payId,periodoIni:periodoIni,periodoFin:periodoFin,estadoPago:'',
-    cbkStatus:status,userName:cliente,flags,hasErr,ok:flags.length===0};
+    cbkStatus:status,userName:cliente,volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
 function process(c,accById,payIdx){
   const ref=getCI(c,['Reference'])||'';
@@ -407,27 +461,31 @@ function process(c,accById,payIdx){
   } else {
     flags.push({l:'warn',m:'Pago no verificado en el reporte de Ventas (se usó el ID de pago del Invoice)'});
   }
+  const vp=detectarVolvioPagar(payIdx,accId,pagoHastaAct);
+  if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
   const hasErr=flags.some(f=>f.l==='err');
   return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref,idPago,periodoIni,periodoFin,estadoPago,cbkStatus,userName,
-    flags,hasErr,ok:flags.length===0};
+    volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
 
 /* ---------- Render ---------- */
 function esc(s){return String(s==null?'':s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
 function flagTags(flags){
   if(!flags.length) return '<span class="tag ok">OK</span>';
-  return flags.map(f=>`<span class="tag ${f.l==='err'?'err':'warn'}">${esc(f.m)}</span>`).join('');
+  return flags.map(f=>`<span class="tag ${f.l}">${esc(f.m)}</span>`).join('');
 }
 function render(){
   const ok=RESULTS.filter(r=>r.ok).length;
   const warn=RESULTS.filter(r=>!r.ok&&!r.hasErr).length;
   const err=RESULTS.filter(r=>r.hasErr).length;
+  const vpc=RESULTS.filter(r=>r.volvioPagar).length;
   document.getElementById('summary').innerHTML=
     `<span class="pill">Contracargos: <b>${RESULTS.length}</b></span>`+
     `<span class="pill ok">Listos: <b>${ok}</b></span>`+
     `<span class="pill warn">Con aviso: <b>${warn}</b></span>`+
-    `<span class="pill err">Con error: <b>${err}</b></span>`;
+    `<span class="pill err">Con error: <b>${err}</b></span>`+
+    (vpc?`<span class="pill vp">💰 Volvieron a pagar: <b>${vpc}</b></span>`:'');
   const cols=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Controles'];
   let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
   RESULTS.forEach(r=>{
@@ -514,7 +572,9 @@ function rowObject(r){
     'Transacción relacionada':r.tref,
     'ID de pago':r.idPago,
     'Fecha inicio':r.periodoIni,
-    'Fecha fin':r.periodoFin
+    'Fecha fin':r.periodoFin,
+    '¿Volvió a pagar?': r.volvioPagar ? 'Sí' : '',
+    'Comentarios': r.volvioPagar ? ('Volvió a pagar '+r.volvioPagar.iso+' (Payment_ID '+r.volvioPagar.pid+')') : ''
   };
 }
 function goodRows(){return RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago);}
@@ -525,6 +585,7 @@ function sendToSheet(){
     ref:r.ref,
     status:r.cbkStatus,
     canInsert: !r.hasErr && !!r.pagoHastaNew && !!r.idPago,
+    volvio: r.volvioPagar ? {iso:r.volvioPagar.iso, pid:String(r.volvioPagar.pid)} : null,
     row: rowObject(r)
   }));
   const btn=document.getElementById('btn-send'); btn.disabled=true;
