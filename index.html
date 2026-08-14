@@ -21,14 +21,21 @@
   .cover h1{font-size:26px;font-weight:700;margin:0 0 6px;letter-spacing:-.01em}
   .cover .sub{font-size:14px;font-weight:500;margin:0;color:#fff}
   .wrap{max-width:1200px;margin:0 auto;padding:24px 20px 80px}
-  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+  .steptitle{font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--azul-medio);margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-bottom:22px}
   @media(max-width:820px){.grid{grid-template-columns:1fr}}
-  .drop{background:var(--blanco);border:1.5px dashed var(--gris);border-radius:12px;padding:16px;transition:.15s}
-  .drop.ok{border-color:var(--azul-medio);border-style:solid}
-  .drop h3{margin:0 0 4px;font-size:14px;font-weight:600;color:var(--azul-oscuro)}
-  .drop p{margin:0 0 10px;color:var(--texto);font-size:12px}
+  .drop{background:var(--blanco);border:1.5px solid var(--gris);border-radius:14px;padding:20px 18px 16px;transition:.15s;position:relative;display:flex;flex-direction:column;min-height:190px}
+  .drop:hover{border-color:var(--azul-medio)}
+  .drop.ok{border-color:var(--azul-medio);box-shadow:0 0 0 3px rgba(95,95,196,.12)}
+  .drop .num{position:absolute;top:-13px;left:18px;width:28px;height:28px;border-radius:50%;background:var(--naranja);color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(255,80,35,.35)}
+  .drop.opt .num{background:var(--azul-medio);box-shadow:none}
+  .drop h3{margin:4px 0 4px;font-size:15px;font-weight:700;color:var(--azul-oscuro)}
+  .drop p{margin:0 0 14px;color:var(--texto);font-size:12px;flex:1;opacity:.85}
   .drop input[type=file]{font-size:12px;color:var(--texto);width:100%}
-  .status{font-size:12px;margin-top:8px;color:var(--texto);font-weight:500}
+  .drop input[type=file]::file-selector-button{font-family:'Barlow',sans-serif;font-weight:600;background:var(--azul-oscuro);color:#fff;border:0;border-radius:8px;padding:8px 14px;margin-right:10px;cursor:pointer}
+  .drop input[type=file]::file-selector-button:hover{filter:brightness(1.15)}
+  input[type=checkbox]{accent-color:var(--azul-oscuro);width:16px;height:16px;cursor:pointer}
+  .status{font-size:12px;margin-top:10px;color:var(--texto);font-weight:600}
   .status.ok{color:var(--azul-oscuro)}
   .status.err{color:var(--naranja)}
   button{background:var(--naranja);color:#fff;border:0;border-radius:9px;padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer;font-family:'Barlow',sans-serif}
@@ -98,24 +105,28 @@
     <p>Debe incluir las columnas <code>ID pago</code>, <code>ID cuenta</code> e <code>ID pago externo</code> (empieza con <code>T-</code>).</p>
   </details>
 
+  <p class="steptitle">Cargá los archivos</p>
   <div class="grid">
     <div class="drop" id="drop-cbk">
-      <h3>1 · Export de contracargos</h3>
-      <p>Podés cargar <b>varios juntos</b>: dLocal (.csv) y Mercado Pago (.xlsx) a la vez. Cada uno se detecta automáticamente.</p>
+      <span class="num">1</span>
+      <h3>Export de contracargos</h3>
+      <p>Podés cargar <b>varios juntos</b>: dLocal (.csv) y Mercado Pago (.xlsx). Cada uno se detecta automáticamente.</p>
       <div class="filehint">📄 dlocal-chargeback-….csv &nbsp;+&nbsp; after_collection-….xlsx</div>
       <input type="file" id="file-cbk" accept=".csv,.xlsx,.xls" multiple>
       <div class="status" id="st-cbk">Sin archivo</div>
     </div>
     <div class="drop" id="drop-acc">
-      <h3>2 · Export de cuentas</h3>
+      <span class="num">2</span>
+      <h3>Export de cuentas</h3>
       <p>El export de cuentas de Dash (con la columna Pago hasta).</p>
       <div class="filehint">📄 accounts_….csv</div>
       <input type="file" id="file-acc" accept=".csv,.xlsx,.xls">
       <div class="status" id="st-acc">Sin archivo</div>
     </div>
-    <div class="drop" id="drop-pay">
-      <h3>3 · Reporte de Ventas (VO) <span style="font-weight:400;color:var(--gris)">(opcional)</span></h3>
-      <p>Opcional. El ID de pago ya sale del archivo de contracargos. El reporte de Ventas Online (Metabase) sirve para verificar el pago y traer el período. Subí uno filtrado (Argentina o últimos meses); el completo es muy pesado.</p>
+    <div class="drop opt" id="drop-pay">
+      <span class="num">3</span>
+      <h3>Reporte de Ventas (VO) <span style="font-weight:400;color:var(--gris)">· opcional</span></h3>
+      <p>Sirve para verificar el pago, traer el período y detectar "volvió a pagar". Subí uno filtrado (últimos meses); el completo es muy pesado.</p>
       <div class="filehint">📄 query_result_….csv</div>
       <input type="file" id="file-pay" accept=".csv,.xlsx,.xls">
       <div class="status" id="st-pay">Sin archivo</div>
@@ -142,7 +153,7 @@
     <div class="summary" id="summary"></div>
 
     <div class="section-title">📋 Contracargos procesados</div>
-    <p class="hint">Al sincronizar: los nuevos validados se agregan (justo debajo del último contracargo), los que ya existen y cambiaron de estado se actualizan, el resto queda igual. Las filas en salmón/naranja no se agregan como nuevas (pero sí se les actualiza el estado si ya existían).</p>
+    <p class="hint">Marcá con el <b>check</b> las filas que querés sincronizar/descargar (por defecto vienen tildadas las válidas; destildá las que ya procesaste). Al sincronizar: los nuevos se agregan debajo del último contracargo, los que ya existen y cambiaron de estado se actualizan, y se marca "¿Volvió a pagar?" cuando corresponde.</p>
     <div class="row">
       <button id="btn-send" disabled>🔄 Sincronizar con el Sheet</button>
       <button class="ghost" id="btn-copy">Copiar tabla (TSV)</button>
@@ -152,7 +163,7 @@
     <div class="tablewrap"><table id="tbl-sheet"></table></div>
 
     <div class="section-title">⬇️ CSV para subir a Dash</div>
-    <p class="hint">Solo incluyen las filas <b>validadas</b> (sin errores).</p>
+    <p class="hint">Incluyen solo las filas <b>seleccionadas</b> con el check (y válidas).</p>
     <div class="row">
       <a class="dl" id="dl-fecha"></a>
       <a class="dl" id="dl-estado"></a>
@@ -172,6 +183,32 @@
 <script>
 /* ====== Conexión precargada (no tocar) ====== */
 const WEBAPP_URL='https://script.google.com/a/macros/fu.do/s/AKfycbyDnCYOWcVgi0m84QUBA59wrnyd1n5YipN6BNa1b5lYhwEiMf0_XXJGRY6dFfhK1do-dQ/exec';
+
+/* ============================================================
+   REGLAS AUTOMÁTICAS  (agregá reglas nuevas acá, sin tocar nada más)
+   Formato: { si:{campo:valor}, poner:{ 'Columna del Sheet':'valor' } }
+   Campos disponibles en "si": pais, origen ('dLocal' | 'MP'), estado
+   Ejemplos:
+     { si:{ pais:'México' },    poner:{ 'Ejecutiva':'Edgar Arriaga' } }
+     { si:{ pais:'Argentina' }, poner:{ 'Ejecutiva':'Nombre Apellido' } }
+   ============================================================ */
+const REGLAS = [
+  { si:{ pais:'México' }, poner:{ 'Ejecutiva':'Edgar Arriaga' } }
+];
+function aplicarReglas(ctx){
+  var out={};
+  REGLAS.forEach(function(r){
+    var ok=Object.keys(r.si).every(function(k){
+      return String(ctx[k]==null?'':ctx[k]).trim().toLowerCase()===String(r.si[k]).trim().toLowerCase();
+    });
+    if(ok) Object.assign(out, r.poner);
+  });
+  return out;
+}
+function ejecutivaDe(r){
+  var reglas=aplicarReglas({pais:r.pais, origen:r.origen, estado:r.cbkStatus});
+  return reglas['Ejecutiva'] || CFG.eje || '';
+}
 
 /* ---------- CSV parser ---------- */
 function parseCSV(text){
@@ -363,6 +400,7 @@ function run(){
 
   if(noRecon.length) alert('No reconocí estos archivos (no parecen dLocal ni Mercado Pago) y los salteé:\n- '+noRecon.join('\n- '));
   if(!RESULTS.length){ alert('No encontré contracargos válidos en los archivos cargados.'); return; }
+  RESULTS.forEach(function(r){ r.selected = !r.hasErr && !!r.pagoHastaNew && !!r.idPago; }); // por defecto: seleccionadas las válidas
   render();
   document.getElementById('out').style.display='block';
 }
@@ -414,8 +452,9 @@ function processMP(c,accById,payIdx){
   const anchorVP = toISO(getBy(c,['(operation_date_created)'])) || pagoHastaNew || pagoHastaAct;
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
   if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
+  const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
   const hasErr=flags.some(f=>f.l==='err');
-  return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
+  return {ref,accId,nombre,pais,origen:'MP',link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref:opId,idPago:payId,periodoIni:periodoIni,periodoFin:periodoFin,estadoPago:'',
     cbkStatus:status,userName:cliente,volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
@@ -465,8 +504,9 @@ function process(c,accById,payIdx){
   const anchorVP = toISO(getCI(c,['Creation date','Creation Date'])) || pagoHastaNew || pagoHastaAct;
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
   if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
+  const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
   const hasErr=flags.some(f=>f.l==='err');
-  return {ref,accId,nombre,link:accId?('https://dash.fu.do/accounts/'+accId):'',
+  return {ref,accId,nombre,pais,origen:'dLocal',link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref,idPago,periodoIni,periodoFin,estadoPago,cbkStatus,userName,
     volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
@@ -488,11 +528,14 @@ function render(){
     `<span class="pill warn">Con aviso: <b>${warn}</b></span>`+
     `<span class="pill err">Con error: <b>${err}</b></span>`+
     (vpc?`<span class="pill vp">💰 Volvieron a pagar: <b>${vpc}</b></span>`:'');
-  const cols=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Controles'];
+  const cols=['<input type="checkbox" id="chk-all" onchange="toggleAll(this)" title="Seleccionar todo">','Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Ejecutiva','Controles'];
   let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
-  RESULTS.forEach(r=>{
+  RESULTS.forEach((r,i)=>{
     const cls=r.hasErr?'bad':(r.ok?'':'flag');
+    const canExport=!r.hasErr && r.pagoHastaNew && r.idPago;
+    const chk=`<input type="checkbox" data-i="${i}" onchange="toggleSel(this)" ${r.selected?'checked':''} ${canExport?'':'disabled'}>`;
     h+=`<tr class="${cls}">`+
+      `<td style="text-align:center">${chk}</td>`+
       `<td class="mono">${esc(r.ref)}</td>`+
       `<td>${esc(r.nombre)}</td>`+
       `<td class="mono"><a href="${esc(r.link)}" target="_blank">${esc(r.accId)}</a></td>`+
@@ -503,18 +546,13 @@ function render(){
       `<td class="mono">${esc(r.periodoFin)}</td>`+
       `<td>${esc(r.cbkStatus)}</td>`+
       `<td>${esc(r.userName)}</td>`+
+      `<td>${esc(ejecutivaDe(r))}</td>`+
       `<td>${flagTags(r.flags)}</td>`+
     `</tr>`;
   });
   h+='</tbody>';
   document.getElementById('tbl-sheet').innerHTML=h;
-  updateSendBtn();
-
-  const good=goodRows();
-  const csvFecha='ID,Pago hasta\n'+good.map(r=>`${r.accId},${r.pagoHastaNew}`).join('\n');
-  const csvEstado='ID de pago,Estado\n'+good.map(r=>`${r.idPago},Desconocimiento`).join('\n');
-  setDownload('dl-fecha','Plantilla - Importar fecha de pago hasta.csv',csvFecha,`⬇️ Importar fecha de pago hasta (${good.length})`);
-  setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${good.length})`);
+  updateExports();
 
   const tsvHead=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Status','Cliente','Controles'];
   window.__tsv=[tsvHead.join('\t')].concat(RESULTS.map(r=>[
@@ -563,7 +601,7 @@ document.getElementById('cfg-test').addEventListener('click',()=>{
 });
 function today(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function rowObject(r){
-  return {
+  var base={
     'Fecha':today(),
     'Referencia desconocimiento':r.ref,
     'Nombre de la cuenta':r.nombre,
@@ -578,12 +616,29 @@ function rowObject(r){
     '¿Volvió a pagar?': r.volvioPagar ? 'Sí' : '',
     'Comentarios': r.volvioPagar ? ('Volvió a pagar '+r.volvioPagar.iso+' (Payment_ID '+r.volvioPagar.pid+')') : ''
   };
+  // las reglas automáticas pisan lo que corresponda (ej. Ejecutiva por país)
+  return Object.assign(base, aplicarReglas({pais:r.pais, origen:r.origen, estado:r.cbkStatus}));
 }
 function goodRows(){return RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago);}
-function updateSendBtn(){const b=document.getElementById('btn-send');if(b)b.disabled=!(CFG.url&&RESULTS.length);}
+function selectedRows(){return RESULTS.filter(r=>r.selected && !r.hasErr && r.pagoHastaNew && r.idPago);}
+window.toggleSel=function(el){var i=+el.getAttribute('data-i'); if(RESULTS[i]) RESULTS[i].selected=el.checked; updateExports();};
+window.toggleAll=function(el){RESULTS.forEach(function(r){ if(!r.hasErr && r.pagoHastaNew && r.idPago) r.selected=el.checked;}); render();};
+function updateExports(){
+  var sel=selectedRows();
+  var csvFecha='ID,Pago hasta\n'+sel.map(r=>`${r.accId},${r.pagoHastaNew}`).join('\n');
+  var csvEstado='ID de pago,Estado\n'+sel.map(r=>`${r.idPago},Desconocimiento`).join('\n');
+  setDownload('dl-fecha','Plantilla - Importar fecha de pago hasta.csv',csvFecha,`⬇️ Importar fecha de pago hasta (${sel.length})`);
+  setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${sel.length})`);
+  var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && sel.length);
+  var ca=document.getElementById('chk-all');
+  if(ca){ var exp=RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago); ca.checked = exp.length>0 && exp.every(r=>r.selected); }
+}
+function updateSendBtn(){var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && RESULTS.length && selectedRows().length);}
 function sendToSheet(){
   if(!RESULTS.length){alert('Primero procesá un archivo.');return;}
-  const items=RESULTS.map(r=>({
+  const sel=selectedRows();
+  if(!sel.length){alert('No hay filas seleccionadas. Marcá con el check las que querés sincronizar.');return;}
+  const items=sel.map(r=>({
     ref:r.ref,
     status:r.cbkStatus,
     canInsert: !r.hasErr && !!r.pagoHastaNew && !!r.idPago,
