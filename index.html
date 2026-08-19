@@ -199,6 +199,8 @@ const WEBAPP_URL='https://script.google.com/a/macros/fu.do/s/AKfycbyDnCYOWcVgi0m
 const REGLAS = [
   { si:{ pais:'México' }, poner:{ 'Ejecutiva':'Edgar Arriaga' } }
 ];
+/* Estados de Mercado Pago que NO se cargan (reembolsos/devoluciones ya resueltas). Agregá más si hace falta. */
+const ESTADOS_MP_IGNORAR = ['reimbursed'];
 function aplicarReglas(ctx){
   var out={};
   REGLAS.forEach(function(r){
@@ -413,7 +415,7 @@ function run(){
   if(!RESULTS.length){ alert('No encontré contracargos válidos en los archivos cargados.'); return; }
   RESULTS.sort(function(a,b){ return String(a.fecha||'9999-99-99').localeCompare(String(b.fecha||'9999-99-99')); }); // orden cronológico
   clasificarNovedades();
-  RESULTS.forEach(function(r){ r.selected = !r.hasErr && !!r.pagoHastaNew && !!r.idPago; }); // por defecto: seleccionadas las válidas
+  RESULTS.forEach(function(r){ r.selected = !r.hasErr && !!r.pagoHastaNew; }); // por defecto: seleccionadas las que tienen cuenta + pago hasta
   render();
   document.getElementById('out').style.display='block';
 }
@@ -433,6 +435,8 @@ function mapEstadoMP(s){
 function processMP(c,accById,payIdx,accByName){
   const flow=(getBy(c,['(flow)'])||'').trim().toLowerCase();
   if(flow!=='chargeback' && flow!=='claim') return null; // contracargos y reclamos (ignora refunds)
+  const rawStatus=(getBy(c,['(status)'])||'').trim().toLowerCase();
+  if(ESTADOS_MP_IGNORAR.indexOf(rawStatus)>=0) return null; // reembolsos/devoluciones: no van al sheet
   const ext=(getBy(c,['(operation_external_reference)'])||'').trim();
   const seg=ext.split('::');
   let accId=(seg[0]||'').trim();
@@ -569,7 +573,7 @@ function render(){
   let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
   RESULTS.forEach((r,i)=>{
     const cls=r.hasErr?'bad':(r.ok?'':'flag');
-    const canExport=!r.hasErr && r.pagoHastaNew && r.idPago;
+    const canExport=!r.hasErr && r.pagoHastaNew;
     const chk=`<input type="checkbox" data-i="${i}" onchange="toggleSel(this)" ${r.selected?'checked':''} ${canExport?'':'disabled'}>`;
     h+=`<tr class="${cls}">`+
       `<td style="text-align:center">${chk}</td>`+
@@ -674,18 +678,19 @@ function rowObject(r){
   return Object.assign(base, aplicarReglas({pais:r.pais, origen:r.origen, estado:r.cbkStatus}));
 }
 function goodRows(){return RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago);}
-function selectedRows(){return RESULTS.filter(r=>r.selected && !r.hasErr && r.pagoHastaNew && r.idPago);}
+function selectedRows(){return RESULTS.filter(r=>r.selected && !r.hasErr && r.pagoHastaNew);}
 window.toggleSel=function(el){var i=+el.getAttribute('data-i'); if(RESULTS[i]) RESULTS[i].selected=el.checked; updateExports();};
-window.toggleAll=function(el){RESULTS.forEach(function(r){ if(!r.hasErr && r.pagoHastaNew && r.idPago) r.selected=el.checked;}); render();};
+window.toggleAll=function(el){RESULTS.forEach(function(r){ if(!r.hasErr && r.pagoHastaNew) r.selected=el.checked;}); render();};
 function updateExports(){
   var sel=selectedRows();
+  var conPago=sel.filter(function(r){return r.idPago;});
   var csvFecha='ID,Pago hasta\n'+sel.map(r=>`${r.accId},${r.pagoHastaNew}`).join('\n');
-  var csvEstado='ID de pago,Estado\n'+sel.map(r=>`${r.idPago},Desconocimiento`).join('\n');
+  var csvEstado='ID de pago,Estado\n'+conPago.map(r=>`${r.idPago},Desconocimiento`).join('\n');
   setDownload('dl-fecha','Plantilla - Importar fecha de pago hasta.csv',csvFecha,`⬇️ Importar fecha de pago hasta (${sel.length})`);
-  setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${sel.length})`);
+  setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${conPago.length})`);
   var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && sel.length);
   var ca=document.getElementById('chk-all');
-  if(ca){ var exp=RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago); ca.checked = exp.length>0 && exp.every(r=>r.selected); }
+  if(ca){ var exp=RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew); ca.checked = exp.length>0 && exp.every(r=>r.selected); }
 }
 function updateSendBtn(){var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && RESULTS.length && selectedRows().length);}
 function sendToSheet(){
@@ -695,7 +700,7 @@ function sendToSheet(){
   const items=sel.map(r=>({
     ref:r.ref,
     status:r.cbkStatus,
-    canInsert: !r.hasErr && !!r.pagoHastaNew && !!r.idPago,
+    canInsert: !r.hasErr && !!r.pagoHastaNew,
     volvio: r.volvioPagar ? {iso:r.volvioPagar.iso, pid:String(r.volvioPagar.pid), rec:r.volvioPagar.rec||'', ini:r.volvioPagar.ini||'', fin:r.volvioPagar.fin||''} : null,
     row: rowObject(r)
   }));
