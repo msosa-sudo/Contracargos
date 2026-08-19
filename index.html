@@ -45,6 +45,9 @@
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:22px}
   .summary{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 18px}
   .pill{background:var(--blanco);border:1px solid var(--gris);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:500}
+  .pill.click{cursor:pointer;user-select:none;transition:.1s}
+  .pill.click:hover{border-color:var(--azul-medio)}
+  .pill.active{border-color:var(--azul-oscuro);box-shadow:0 0 0 2px rgba(57,56,160,.22)}
   .pill b{font-size:18px;font-weight:700}
   .pill.ok b{color:var(--azul-oscuro)} .pill.warn b{color:var(--azul-medio)} .pill.err b{color:var(--naranja)}
   table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--blanco);border-radius:10px;overflow:hidden}
@@ -164,13 +167,21 @@
     <div class="summary" id="summary"></div>
 
     <div class="section-title">📋 Contracargos procesados</div>
-    <p class="hint">Marcá con el <b>check</b> las filas que querés sincronizar/descargar (por defecto vienen tildadas las válidas; destildá las que ya procesaste). Al sincronizar: los nuevos se agregan debajo del último contracargo, los que ya existen y cambiaron de estado se actualizan, y se marca "¿Volvió a pagar?" cuando corresponde.</p>
+    <p class="hint">Marcá con el <b>check</b> las filas que querés sincronizar/descargar (por defecto vienen tildadas las válidas; destildá las que ya procesaste). Al sincronizar: los nuevos se agregan debajo del último contracargo, los que ya existen y cambiaron de estado se actualizan, y se marca "¿Volvió a pagar?" cuando corresponde. <b>Tip:</b> hacé clic en un indicador de arriba (🆕 Nuevos, 🔄 Cambio de estado, etc.) para filtrar la tabla; volvé a clic o "Contracargos" para ver todo.</p>
     <div class="row">
       <button id="btn-send" disabled>🔄 Sincronizar con el Sheet</button>
       <button class="ghost" id="btn-copy">Copiar tabla (TSV)</button>
       <a class="dl" id="dl-sheet"></a>
     </div>
     <div class="status" id="send-status" style="margin:-14px 0 18px"></div>
+    <div class="row" style="margin:0 0 12px;gap:8px;align-items:center">
+      <span style="font-size:12px;color:var(--azul-oscuro);font-weight:700">🔎 Filtrar por fecha:</span>
+      <input type="date" id="f-from" onchange="setFilterFecha()" class="cfgin" style="padding:6px">
+      <span style="color:var(--gris)">a</span>
+      <input type="date" id="f-to" onchange="setFilterFecha()" class="cfgin" style="padding:6px">
+      <button class="ghost" onclick="limpiarFiltros()">Limpiar filtros</button>
+      <span id="filter-count" style="font-size:12px;color:var(--texto);font-weight:600"></span>
+    </div>
     <div class="tablewrap"><table id="tbl-sheet"></table></div>
 
     <div class="section-title">⬇️ CSV para subir a Dash</div>
@@ -561,6 +572,25 @@ function flagTags(flags){
   if(!flags.length) return '<span class="tag ok">OK</span>';
   return flags.map(f=>`<span class="tag ${f.l}">${esc(f.m)}</span>`).join('');
 }
+/* ---------- Filtros (indicadores clickeables + fecha) ---------- */
+const FILTER={cat:'',from:'',to:''};
+function matchesFilter(r){
+  var c=FILTER.cat;
+  if(c==='nuevo' && r.novedad!=='nuevo') return false;
+  if(c==='cambio' && r.novedad!=='cambio') return false;
+  if(c==='listos' && !r.ok) return false;
+  if(c==='aviso' && !(!r.hasErr && !r.ok)) return false;
+  if(c==='error' && !r.hasErr) return false;
+  if(c==='volvio' && !r.volvioPagar) return false;
+  if(FILTER.from && (!r.fecha || r.fecha<FILTER.from)) return false;
+  if(FILTER.to && (!r.fecha || r.fecha>FILTER.to)) return false;
+  return true;
+}
+window.setFilter=function(cat){ FILTER.cat=(FILTER.cat===cat)?'':cat; render(); };
+window.setFilterFecha=function(){ var a=document.getElementById('f-from'),b=document.getElementById('f-to'); FILTER.from=a?a.value:''; FILTER.to=b?b.value:''; render(); };
+window.limpiarFiltros=function(){ FILTER.cat='';FILTER.from='';FILTER.to=''; var a=document.getElementById('f-from'),b=document.getElementById('f-to'); if(a)a.value='';if(b)b.value=''; render(); };
+function pillHTML(cat,label,val,cls){ var act=FILTER.cat===cat?' active':''; return `<span class="pill click ${cls||''}${act}" onclick="setFilter('${cat}')">${label}: <b>${val}</b></span>`; }
+
 function render(){
   const ok=RESULTS.filter(r=>r.ok).length;
   const warn=RESULTS.filter(r=>!r.ok&&!r.hasErr).length;
@@ -569,16 +599,19 @@ function render(){
   const nuevos=RESULTS.filter(r=>r.novedad==='nuevo').length;
   const cambios=RESULTS.filter(r=>r.novedad==='cambio').length;
   document.getElementById('summary').innerHTML=
-    `<span class="pill">Contracargos: <b>${RESULTS.length}</b></span>`+
-    `<span class="pill nuevo">🆕 Nuevos: <b>${nuevos}</b></span>`+
-    `<span class="pill cambio">🔄 Cambio de estado: <b>${cambios}</b></span>`+
-    `<span class="pill ok">Listos: <b>${ok}</b></span>`+
-    `<span class="pill warn">Con aviso: <b>${warn}</b></span>`+
-    `<span class="pill err">Con error: <b>${err}</b></span>`+
-    (vpc?`<span class="pill vp">💰 Volvieron a pagar: <b>${vpc}</b></span>`:'');
+    `<span class="pill click${FILTER.cat?'':' active'}" onclick="limpiarFiltros()">Contracargos: <b>${RESULTS.length}</b></span>`+
+    pillHTML('nuevo','🆕 Nuevos',nuevos,'nuevo')+
+    pillHTML('cambio','🔄 Cambio de estado',cambios,'cambio')+
+    pillHTML('listos','Listos',ok,'ok')+
+    pillHTML('aviso','Con aviso',warn,'warn')+
+    pillHTML('error','Con error',err,'err')+
+    (vpc?pillHTML('volvio','💰 Volvieron a pagar',vpc,'vp'):'');
   const cols=['<input type="checkbox" id="chk-all" onchange="toggleAll(this)" title="Seleccionar todo">','Novedad','Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Ejecutiva','Controles'];
   let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
+  let shown=0;
   RESULTS.forEach((r,i)=>{
+    if(!matchesFilter(r)) return;
+    shown++;
     const cls=r.hasErr?'bad':(r.ok?'':'flag');
     const canExport=!r.hasErr && r.pagoHastaNew;
     const chk=`<input type="checkbox" data-i="${i}" onchange="toggleSel(this)" ${r.selected?'checked':''} ${canExport?'':'disabled'}>`;
@@ -601,6 +634,8 @@ function render(){
   });
   h+='</tbody>';
   document.getElementById('tbl-sheet').innerHTML=h;
+  var fc=document.getElementById('filter-count');
+  if(fc) fc.textContent=(FILTER.cat||FILTER.from||FILTER.to)?('Mostrando '+shown+' de '+RESULTS.length):'';
   updateExports();
 
   const tsvHead=['Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Status','Cliente','Controles'];
@@ -687,7 +722,7 @@ function rowObject(r){
 function goodRows(){return RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && r.idPago);}
 function selectedRows(){return RESULTS.filter(r=>r.selected && !r.hasErr && r.pagoHastaNew);}
 window.toggleSel=function(el){var i=+el.getAttribute('data-i'); if(RESULTS[i]) RESULTS[i].selected=el.checked; updateExports();};
-window.toggleAll=function(el){RESULTS.forEach(function(r){ if(!r.hasErr && r.pagoHastaNew) r.selected=el.checked;}); render();};
+window.toggleAll=function(el){RESULTS.forEach(function(r){ if(!r.hasErr && r.pagoHastaNew && matchesFilter(r)) r.selected=el.checked;}); render();};
 function updateExports(){
   var sel=selectedRows();
   var conPago=sel.filter(function(r){return r.idPago;});
@@ -697,7 +732,7 @@ function updateExports(){
   setDownload('dl-estado','Plantilla - Importar Estado de Pago.csv',csvEstado,`⬇️ Importar Estado de Pago (${conPago.length})`);
   var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && sel.length);
   var ca=document.getElementById('chk-all');
-  if(ca){ var exp=RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew); ca.checked = exp.length>0 && exp.every(r=>r.selected); }
+  if(ca){ var exp=RESULTS.filter(r=>!r.hasErr && r.pagoHastaNew && matchesFilter(r)); ca.checked = exp.length>0 && exp.every(r=>r.selected); }
 }
 function updateSendBtn(){var b=document.getElementById('btn-send'); if(b) b.disabled=!(CFG.url && RESULTS.length && selectedRows().length);}
 function sendToSheet(){
