@@ -57,7 +57,11 @@
   .tag.warn{background:var(--salmon);color:var(--texto)}
   .tag.err{background:var(--naranja);color:#fff}
   .tag.info{background:var(--azul-medio);color:#fff}
+  .tag.nuevo{background:var(--azul-oscuro);color:#fff}
+  .tag.cambio{background:var(--salmon);color:var(--texto)}
   .pill.vp b{color:var(--azul-medio)}
+  .pill.nuevo b{color:var(--azul-oscuro)}
+  .pill.cambio b{color:var(--naranja)}
   .mono{font-family:'Barlow',sans-serif;font-size:11.5px;letter-spacing:.02em}
   .section-title{font-size:16px;font-weight:700;color:var(--azul-oscuro);margin:26px 0 8px;display:flex;align-items:center;gap:8px}
   .hint{color:var(--texto);font-size:12px;margin:0 0 10px}
@@ -209,6 +213,8 @@ function ejecutivaDe(r){
   var reglas=aplicarReglas({pais:r.pais, origen:r.origen, estado:r.cbkStatus});
   return reglas['Ejecutiva'] || CFG.eje || '';
 }
+/* normaliza un nombre de cuenta para comparar (minúsculas, solo letras/números ascii) */
+function normNombre(s){ return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9]/g,''); }
 
 /* ---------- CSV parser ---------- */
 function parseCSV(text){
@@ -366,7 +372,9 @@ function buildPayIndex(rows){
     const acc=numKey(getCI(r,['ID cuenta','Account_ID']));
     if(acc){
       const iso=toISO(getCI(r,['Payment_Date','Fecha de acreditación del pago','Fecha']));
-      (idx.byAcc[acc]=idx.byAcc[acc]||[]).push({iso:iso, pid:id, rec:ref});
+      (idx.byAcc[acc]=idx.byAcc[acc]||[]).push({iso:iso, pid:id, rec:ref,
+        ini:toISO(getCI(r,['Inicio de período de pago','Inicio de periodo de pago','Start_Date'])),
+        fin:toISO(getCI(r,['Fin de período de pago','Fin de periodo de pago','End_Date']))});
     }
   });
   return idx;
@@ -382,8 +390,11 @@ function detectarVolvioPagar(payIdx, accId, anchorISO){
 function run(){
   const accH=findHeader(data.acc,['ID','Pago hasta']);
   if(accH<0){alert('El export de cuentas no tiene las columnas ID / Pago hasta.');return;}
-  const accById={};
-  toObjects(data.acc,accH).out.forEach(r=>{const id=getCI(r,['ID']); if(id) accById[String(id).trim()]=r;});
+  const accById={}, accByName={};
+  toObjects(data.acc,accH).out.forEach(r=>{
+    const id=getCI(r,['ID']); if(id) accById[String(id).trim()]=r;
+    const nk=normNombre(getCI(r,['Nombre'])); if(nk){ (accByName[nk]=accByName[nk]||[]).push(r); }
+  });
   const payIdx=buildPayIndex(data.pay);
 
   RESULTS=[];
@@ -394,12 +405,14 @@ function run(){
     const cbk=toObjects(file.rows,det.hdr).out;
     const res = (det.type==='dlocal')
       ? cbk.map(c=>process(c,accById,payIdx)).filter(x=>x)
-      : cbk.map(c=>processMP(c,accById,payIdx)).filter(x=>x);
+      : cbk.map(c=>processMP(c,accById,payIdx,accByName)).filter(x=>x);
     RESULTS=RESULTS.concat(res);
   });
 
   if(noRecon.length) alert('No reconocí estos archivos (no parecen dLocal ni Mercado Pago) y los salteé:\n- '+noRecon.join('\n- '));
   if(!RESULTS.length){ alert('No encontré contracargos válidos en los archivos cargados.'); return; }
+  RESULTS.sort(function(a,b){ return String(a.fecha||'9999-99-99').localeCompare(String(b.fecha||'9999-99-99')); }); // orden cronológico
+  clasificarNovedades();
   RESULTS.forEach(function(r){ r.selected = !r.hasErr && !!r.pagoHastaNew && !!r.idPago; }); // por defecto: seleccionadas las válidas
   render();
   document.getElementById('out').style.display='block';
@@ -410,29 +423,47 @@ function mapEstadoMP(s){
   const M={
     'dispute':'IN_DISPUTE',
     'in_process':'IN_DISPUTE',
+    'opened':'IN_DISPUTE',
     'documentation_pending':'DISPUTE_RECEIVED',
     'reimbursed':'DISPUTE_LOST',
     'closed':'COMPLETED'
   };
   return M[k] || 'DISPUTE_RECEIVED';
 }
-function processMP(c,accById,payIdx){
+function processMP(c,accById,payIdx,accByName){
   const flow=(getBy(c,['(flow)'])||'').trim().toLowerCase();
-  if(flow!=='chargeback') return null; // solo contracargos (ignora refunds/claims)
+  if(flow!=='chargeback' && flow!=='claim') return null; // contracargos y reclamos (ignora refunds)
   const ext=(getBy(c,['(operation_external_reference)'])||'').trim();
   const seg=ext.split('::');
-  const accId=(seg[0]||'').trim();
-  const payId=(seg[1]||'').trim();
+  let accId=(seg[0]||'').trim();
+  let payId=(seg[1]||'').trim();
   const status=mapEstadoMP(getBy(c,['(status)']));
   const cliente=getBy(c,['(counterpart_name)'])||'';
   const opId=(getBy(c,['(operation_id)'])||'').trim();
-  const ref = (accId&&payId) ? ('MP-'+accId+'-'+payId) : ('MP-'+(getBy(c,['(id)'])||'').trim());
+  const mpId=(getBy(c,['(id)'])||'').trim();
   const flags=[];
-  if(!accId||!payId) flags.push({l:'err',m:'No pude leer cuenta/pago del external_reference ("'+ext+'")'});
-  const acc=accById[accId];
+  let acc=null;
+  if(/^\d+$/.test(accId) && payId){
+    acc=accById[accId];
+    if(!acc) flags.push({l:'err',m:'Cuenta '+accId+' no está en el export de cuentas'});
+  } else if(ext.indexOf('@')>=0 && accByName){
+    // reclamo con email: el nombre de la cuenta es lo que va después del @
+    const slug=ext.split('@').pop();
+    const found=accByName[normNombre(slug)];
+    if(found && found.length===1){
+      acc=found[0]; accId=String(getCI(acc,['ID'])||'').trim();
+      flags.push({l:'warn',m:'Cuenta identificada por nombre "'+slug+'" (reclamo por email). Falta ID de pago: completá el estado a mano.'});
+    } else if(found && found.length>1){
+      flags.push({l:'err',m:'Varias cuentas coinciden con "'+slug+'": revisá a mano'});
+    } else {
+      flags.push({l:'err',m:'No encontré una cuenta con el nombre "'+slug+'"'});
+    }
+  } else {
+    flags.push({l:'err',m:'No pude leer cuenta/pago del external_reference ("'+ext+'")'});
+  }
+  const ref = (/^\d+$/.test(accId) && payId) ? ('MP-'+accId+'-'+payId) : ('MP-'+mpId);
   let nombre='', pagoHastaAct='', pagoHastaNew='';
-  if(!acc){ flags.push({l:'err',m:'Cuenta '+accId+' no está en el export de cuentas'}); }
-  else{
+  if(acc){
     nombre=getCI(acc,['Nombre'])||'';
     pagoHastaAct=(getCI(acc,['Pago hasta'])||'').slice(0,10);
     pagoHastaNew=pagoHastaMenosMes(pagoHastaAct);
@@ -451,10 +482,11 @@ function processMP(c,accById,payIdx){
   }
   const anchorVP = toISO(getBy(c,['(operation_date_created)'])) || pagoHastaNew || pagoHastaAct;
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
-  if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
+  if(vp) flags.push({l:'info',m:'💰 Volvió a pagar el '+vp.iso+(vp.fin?(' · período '+(vp.ini||'?')+' a '+vp.fin):'')+' · ref '+(vp.rec||'-')+' · Payment_ID '+vp.pid});
   const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
+  const fecha = toISO(getBy(c,['(date_created)'])) || toISO(getBy(c,['(operation_date_created)'])) || '';
   const hasErr=flags.some(f=>f.l==='err');
-  return {ref,accId,nombre,pais,origen:'MP',link:accId?('https://dash.fu.do/accounts/'+accId):'',
+  return {ref,accId,nombre,pais,origen:'MP',fecha,link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref:opId,idPago:payId,periodoIni:periodoIni,periodoFin:periodoFin,estadoPago:'',
     cbkStatus:status,userName:cliente,volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
@@ -503,10 +535,11 @@ function process(c,accById,payIdx){
   }
   const anchorVP = toISO(getCI(c,['Creation date','Creation Date'])) || pagoHastaNew || pagoHastaAct;
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
-  if(vp) flags.push({l:'info',m:'💰 La cuenta volvió a pagar el '+vp.iso+' (Payment_ID '+vp.pid+')'});
+  if(vp) flags.push({l:'info',m:'💰 Volvió a pagar el '+vp.iso+(vp.fin?(' · período '+(vp.ini||'?')+' a '+vp.fin):'')+' · ref '+(vp.rec||'-')+' · Payment_ID '+vp.pid});
   const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
+  const fecha = toISO(getCI(c,['Creation date','Creation Date'])) || pagoHastaAct || '';
   const hasErr=flags.some(f=>f.l==='err');
-  return {ref,accId,nombre,pais,origen:'dLocal',link:accId?('https://dash.fu.do/accounts/'+accId):'',
+  return {ref,accId,nombre,pais,origen:'dLocal',fecha,link:accId?('https://dash.fu.do/accounts/'+accId):'',
     pagoHastaAct,pagoHastaNew,tref,idPago,periodoIni,periodoFin,estadoPago,cbkStatus,userName,
     volvioPagar:vp,flags,hasErr,ok:!flags.some(f=>f.l==='err'||f.l==='warn')};
 }
@@ -522,13 +555,17 @@ function render(){
   const warn=RESULTS.filter(r=>!r.ok&&!r.hasErr).length;
   const err=RESULTS.filter(r=>r.hasErr).length;
   const vpc=RESULTS.filter(r=>r.volvioPagar).length;
+  const nuevos=RESULTS.filter(r=>r.novedad==='nuevo').length;
+  const cambios=RESULTS.filter(r=>r.novedad==='cambio').length;
   document.getElementById('summary').innerHTML=
     `<span class="pill">Contracargos: <b>${RESULTS.length}</b></span>`+
+    `<span class="pill nuevo">🆕 Nuevos: <b>${nuevos}</b></span>`+
+    `<span class="pill cambio">🔄 Cambio de estado: <b>${cambios}</b></span>`+
     `<span class="pill ok">Listos: <b>${ok}</b></span>`+
     `<span class="pill warn">Con aviso: <b>${warn}</b></span>`+
     `<span class="pill err">Con error: <b>${err}</b></span>`+
     (vpc?`<span class="pill vp">💰 Volvieron a pagar: <b>${vpc}</b></span>`:'');
-  const cols=['<input type="checkbox" id="chk-all" onchange="toggleAll(this)" title="Seleccionar todo">','Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Ejecutiva','Controles'];
+  const cols=['<input type="checkbox" id="chk-all" onchange="toggleAll(this)" title="Seleccionar todo">','Novedad','Referencia desconocimiento','Nombre de la cuenta','Link Dash','Pago hasta (nuevo)','Transacción relacionada','ID de pago','Fecha inicio','Fecha fin','Estado dLocal','Cliente','Ejecutiva','Controles'];
   let h='<thead><tr>'+cols.map(c=>`<th>${c}</th>`).join('')+'</tr></thead><tbody>';
   RESULTS.forEach((r,i)=>{
     const cls=r.hasErr?'bad':(r.ok?'':'flag');
@@ -536,6 +573,7 @@ function render(){
     const chk=`<input type="checkbox" data-i="${i}" onchange="toggleSel(this)" ${r.selected?'checked':''} ${canExport?'':'disabled'}>`;
     h+=`<tr class="${cls}">`+
       `<td style="text-align:center">${chk}</td>`+
+      `<td>${novedadTag(r)}</td>`+
       `<td class="mono">${esc(r.ref)}</td>`+
       `<td>${esc(r.nombre)}</td>`+
       `<td class="mono"><a href="${esc(r.link)}" target="_blank">${esc(r.accId)}</a></td>`+
@@ -579,6 +617,22 @@ function setDownload(id,filename,content,label){
   a.innerHTML=`<button class="ghost">${label}</button>`;
 }
 
+/* ---------- Novedades (nuevo / cambió de estado) según la última vez que sincronizaste ---------- */
+const SNAP=(function(){try{return JSON.parse(localStorage.getItem('cbk_snap')||'{}');}catch(e){return {};}})();
+function guardarSnap(){try{localStorage.setItem('cbk_snap',JSON.stringify(SNAP));}catch(e){}}
+function clasificarNovedades(){
+  RESULTS.forEach(function(r){
+    var prev=SNAP[r.ref];
+    r.novedad=(prev===undefined)?'nuevo':(String(prev)!==String(r.cbkStatus)?'cambio':'igual');
+    r.estadoAnterior=(prev===undefined)?'':prev;
+  });
+}
+function novedadTag(r){
+  if(r.novedad==='nuevo') return '<span class="tag nuevo">🆕 Nuevo</span>';
+  if(r.novedad==='cambio') return '<span class="tag cambio">🔄 '+esc(r.estadoAnterior||'?')+'→'+esc(r.cbkStatus)+'</span>';
+  return '<span style="color:var(--gris)">—</span>';
+}
+
 /* ---------- Config (solo nombre) + sincronización ---------- */
 const CFG={url:WEBAPP_URL,token:'',eje:''};
 function loadCfg(){
@@ -614,7 +668,7 @@ function rowObject(r){
     'Fecha inicio':r.periodoIni,
     'Fecha fin':r.periodoFin,
     '¿Volvió a pagar?': r.volvioPagar ? 'Sí' : '',
-    'Comentarios': r.volvioPagar ? ('Volvió a pagar '+r.volvioPagar.iso+' (Payment_ID '+r.volvioPagar.pid+')') : ''
+    'Comentarios': r.volvioPagar ? ('Volvió a pagar '+r.volvioPagar.iso+(r.volvioPagar.fin?(' (período '+(r.volvioPagar.ini||'?')+' a '+r.volvioPagar.fin+')'):'')+' · ref '+(r.volvioPagar.rec||'-')+' · Payment_ID '+r.volvioPagar.pid) : ''
   };
   // las reglas automáticas pisan lo que corresponda (ej. Ejecutiva por país)
   return Object.assign(base, aplicarReglas({pais:r.pais, origen:r.origen, estado:r.cbkStatus}));
@@ -642,7 +696,7 @@ function sendToSheet(){
     ref:r.ref,
     status:r.cbkStatus,
     canInsert: !r.hasErr && !!r.pagoHastaNew && !!r.idPago,
-    volvio: r.volvioPagar ? {iso:r.volvioPagar.iso, pid:String(r.volvioPagar.pid)} : null,
+    volvio: r.volvioPagar ? {iso:r.volvioPagar.iso, pid:String(r.volvioPagar.pid), rec:r.volvioPagar.rec||'', ini:r.volvioPagar.ini||'', fin:r.volvioPagar.fin||''} : null,
     row: rowObject(r)
   }));
   const btn=document.getElementById('btn-send'); btn.disabled=true;
@@ -655,6 +709,7 @@ function sendToSheet(){
   inp.value=JSON.stringify({action:'sync',token:CFG.token||'',items:items});
   form.appendChild(inp); document.body.appendChild(form);
   form.submit();
+  sel.forEach(function(r){ SNAP[r.ref]=r.cbkStatus; }); guardarSnap(); // recordar estado para detectar cambios la próxima
   ss.className='status ok';
   ss.textContent='✓ Enviado. Se abrió una pestaña con el resumen: {added, updated, unchanged, skipped}. Revisá la planilla. El CSV/TSV queda como respaldo.';
   setTimeout(()=>{ if(form.parentNode) form.remove(); btn.disabled=false; },3000);
