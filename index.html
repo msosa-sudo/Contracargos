@@ -502,7 +502,8 @@ function processMP(c,accById,payIdx,accByName){
       if(payAcc && accId && payAcc!==numKey(accId)) flags.push({l:'warn',m:'El pago encontrado es de la cuenta '+payAcc+', no de '+accId});
     }
   }
-  const anchorVP = toISO(getBy(c,['(operation_date_created)'])) || pagoHastaNew || pagoHastaAct;
+  // ancla = fecha de creación del contracargo/reclamo. Solo cuenta como "volvió a pagar" un pago POSTERIOR a esa fecha.
+  const anchorVP = toISO(getBy(c,['(date_created)']));
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
   if(vp) flags.push({l:'info',m:'💰 Volvió a pagar el '+vp.iso+(vp.fin?(' · período '+(vp.ini||'?')+' a '+vp.fin):'')+' · ref '+(vp.rec||'-')+' · Payment_ID '+vp.pid});
   const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
@@ -555,7 +556,8 @@ function process(c,accById,payIdx){
   } else {
     flags.push({l:'warn',m:'Pago no verificado en el reporte de Ventas (se usó el ID de pago del Invoice)'});
   }
-  const anchorVP = toISO(getCI(c,['Creation date','Creation Date'])) || pagoHastaNew || pagoHastaAct;
+  // ancla = fecha de creación del contracargo. Solo cuenta "volvió a pagar" un pago POSTERIOR a esa fecha.
+  const anchorVP = toISO(getCI(c,['Creation date','Creation Date']));
   const vp=detectarVolvioPagar(payIdx,accId,anchorVP);
   if(vp) flags.push({l:'info',m:'💰 Volvió a pagar el '+vp.iso+(vp.fin?(' · período '+(vp.ini||'?')+' a '+vp.fin):'')+' · ref '+(vp.rec||'-')+' · Payment_ID '+vp.pid});
   const pais = acc ? (getCI(acc,['País','Pais','Country'])||'') : '';
